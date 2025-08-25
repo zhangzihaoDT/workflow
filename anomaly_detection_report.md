@@ -2,12 +2,12 @@
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet
-- **生成时间**: 2025-08-25T13:25:03.326268
-- **文件大小**: 2.96 MB
+- **生成时间**: 2025-08-25T14:50:55.610898
+- **文件大小**: 2.66 MB
 
 ## 数据基本信息
-- **数据形状**: 138207 行 × 18 列
-- **数据完整性**: 95.59%
+- **数据形状**: 117758 行 × 18 列
+- **数据完整性**: 95.65%
 - **重复行数**: 0
 
 ## 数据类型分布
@@ -31,18 +31,14 @@ Intention_Payment_Time, first_assign_time, Lock_Time, first_touch_time
 
 | 列名 | 缺失数量 | 缺失比例 |
 |------|----------|----------|
-| Lock_Time | 99014 | 71.64% |
-| buyer_age | 3764 | 2.72% |
-| order_gender | 1 | 0.00% |
-| first_touch_time | 892 | 0.65% |
-| Parent Region Name | 99 | 0.07% |
-| License Province | 5101 | 3.69% |
-| license_city_level | 712 | 0.52% |
-| License City | 46 | 0.03% |
+| Lock_Time | 88306 | 74.99% |
+| buyer_age | 2640 | 2.24% |
+| first_touch_time | 727 | 0.62% |
+| license_city_level | 612 | 0.52% |
 
 ### 重复数据检查
 ✅ 未发现重复数据
 
 ## 数据质量评估
 - **整体评级**: 优秀 ✅
-- **完整性得分**: 95.59%
+- **完整性得分**: 95.65%

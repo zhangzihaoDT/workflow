@@ -10,6 +10,7 @@ from typing import Dict, Any, List
 from langgraph.graph import StateGraph, END
 import logging
 from pathlib import Path
+import re
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -422,6 +423,14 @@ def structure_check_node(state: WorkflowState) -> WorkflowState:
         if demographic_anomalies:
             anomalies.extend(demographic_anomalies)
         
+        # 4. 同比/环比异常检查
+        time_series_anomalies = analyze_time_series_anomalies(vehicle_data, presale_periods)
+        if time_series_anomalies:
+            anomalies.extend(time_series_anomalies)
+        
+        # 将presale_periods添加到state中
+        state['presale_periods'] = presale_periods
+        
         # 生成结构检查报告
         generate_structure_report(state, vehicle_data, anomalies)
         
@@ -766,6 +775,207 @@ def analyze_demographic_structure(vehicle_data):
     
     return anomalies
 
+# 同比/环比异常分析
+def analyze_time_series_anomalies(vehicle_data, presale_periods):
+    """
+    分析CM2车型的同比/环比异常
+    包括：日环比、同周期对比、累计同周期对比
+    """
+    anomalies = []
+    
+    cm2_data = vehicle_data.get('CM2')
+    if cm2_data is None or len(cm2_data) == 0:
+        return ["CM2车型数据为空，无法进行同比/环比分析"]
+    
+    # 获取CM2的起始日期
+    cm2_start = pd.to_datetime(presale_periods['CM2']['start'])
+    
+    # 准备CM2每日订单数据
+    cm2_data_copy = cm2_data.copy()
+    cm2_data_copy['date'] = cm2_data_copy['Intention_Payment_Time'].dt.date
+    cm2_daily = cm2_data_copy.groupby('date').size().reset_index(name='orders')
+    cm2_daily['date'] = pd.to_datetime(cm2_daily['date'])
+    cm2_daily = cm2_daily.sort_values('date')
+    
+    # 1. 日环比异常检查（CM2内部对比）
+    for i in range(1, len(cm2_daily)):
+        current_orders = cm2_daily.iloc[i]['orders']
+        previous_orders = cm2_daily.iloc[i-1]['orders']
+        current_date = cm2_daily.iloc[i]['date']
+        
+        if previous_orders > 0:
+            change_rate = (current_orders - previous_orders) / previous_orders
+            if abs(change_rate) > 0.5:  # 50%阈值
+                change_type = "骤增" if change_rate > 0 else "骤降"
+                anomalies.append(f"[日环比]{current_date.strftime('%Y-%m-%d')}订单量异常{change_type}：当日{current_orders}单，前日{previous_orders}单，变化幅度{change_rate*100:.1f}%")
+    
+    # 2. 同周期对比异常检查（CM2 vs CM0, CM1, DM0, DM1）
+    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+        if vehicle not in vehicle_data or len(vehicle_data[vehicle]) == 0:
+            continue
+            
+        vehicle_start = pd.to_datetime(presale_periods[vehicle]['start'])
+        vehicle_data_copy = vehicle_data[vehicle].copy()
+        vehicle_data_copy['date'] = vehicle_data_copy['Intention_Payment_Time'].dt.date
+        vehicle_daily = vehicle_data_copy.groupby('date').size().reset_index(name='orders')
+        vehicle_daily['date'] = pd.to_datetime(vehicle_daily['date'])
+        vehicle_daily = vehicle_daily.sort_values('date')
+        
+        # 对比相同相对天数的订单量
+        for _, cm2_row in cm2_daily.iterrows():
+            cm2_date = cm2_row['date']
+            cm2_orders = cm2_row['orders']
+            
+            # 计算相对于起始日的天数
+            days_from_start = (cm2_date - cm2_start).days
+            
+            # 找到对应的历史车型日期
+            target_date = vehicle_start + pd.Timedelta(days=days_from_start)
+            
+            # 查找对应日期的订单量
+            vehicle_orders_on_date = vehicle_daily[vehicle_daily['date'] == target_date]
+            
+            if not vehicle_orders_on_date.empty:
+                vehicle_orders = vehicle_orders_on_date.iloc[0]['orders']
+                
+                if vehicle_orders > 0:
+                    change_rate = (cm2_orders - vehicle_orders) / vehicle_orders
+                    if abs(change_rate) > 1.0:  # 100%阈值
+                        change_type = "骤增" if change_rate > 0 else "骤降"
+                        anomalies.append(f"[同周期对比]CM2在{cm2_date.strftime('%Y-%m-%d')}相对{vehicle}同期异常{change_type}：CM2为{cm2_orders}单，{vehicle}同期为{vehicle_orders}单，变化幅度{change_rate*100:.1f}%")
+    
+    # 3. 累计同周期对比异常检查
+    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+        if vehicle not in vehicle_data or len(vehicle_data[vehicle]) == 0:
+            continue
+            
+        vehicle_start = pd.to_datetime(presale_periods[vehicle]['start'])
+        vehicle_data_copy = vehicle_data[vehicle].copy()
+        vehicle_data_copy['date'] = vehicle_data_copy['Intention_Payment_Time'].dt.date
+        vehicle_daily = vehicle_data_copy.groupby('date').size().reset_index(name='orders')
+        vehicle_daily['date'] = pd.to_datetime(vehicle_daily['date'])
+        vehicle_daily = vehicle_daily.sort_values('date')
+        
+        # 计算累计订单量对比
+        for i, cm2_row in cm2_daily.iterrows():
+            cm2_date = cm2_row['date']
+            
+            # 计算相对于起始日的天数
+            days_from_start = (cm2_date - cm2_start).days
+            
+            # CM2累计订单量（从起始日到当前日）
+            cm2_cumulative = cm2_daily[cm2_daily['date'] <= cm2_date]['orders'].sum()
+            
+            # 历史车型对应期间的累计订单量
+            target_end_date = vehicle_start + pd.Timedelta(days=days_from_start)
+            vehicle_cumulative_data = vehicle_daily[
+                (vehicle_daily['date'] >= vehicle_start) & 
+                (vehicle_daily['date'] <= target_end_date)
+            ]
+            
+            if not vehicle_cumulative_data.empty:
+                vehicle_cumulative = vehicle_cumulative_data['orders'].sum()
+                
+                if vehicle_cumulative > 0:
+                    change_rate = (cm2_cumulative - vehicle_cumulative) / vehicle_cumulative
+                    if abs(change_rate) > 1.0:  # 100%阈值
+                        change_type = "骤增" if change_rate > 0 else "骤降"
+                        anomalies.append(f"[累计同周期对比]CM2截至{cm2_date.strftime('%Y-%m-%d')}累计订单相对{vehicle}同期异常{change_type}：CM2累计{cm2_cumulative}单，{vehicle}同期累计{vehicle_cumulative}单，变化幅度{change_rate*100:.1f}%")
+    
+    return anomalies
+
+# 生成日环比描述数据
+def generate_time_series_description(vehicle_data, presale_periods):
+    """
+    生成CM2车型的日环比描述数据
+    包括：CM2日订单数、同期其他车型日订单数、累计订单数对比
+    """
+    description_data = {
+        'cm2_daily': [],
+        'cm2_cumulative': [],
+        'comparison_daily': {},
+        'comparison_cumulative': {}
+    }
+    
+    cm2_data = vehicle_data.get('CM2')
+    if cm2_data is None or len(cm2_data) == 0:
+        return description_data
+    
+    # 获取CM2的起始日期
+    cm2_start = pd.to_datetime(presale_periods['CM2']['start'])
+    
+    # 准备CM2每日订单数据
+    cm2_data_copy = cm2_data.copy()
+    cm2_data_copy['date'] = cm2_data_copy['Intention_Payment_Time'].dt.date
+    cm2_daily = cm2_data_copy.groupby('date').size().reset_index(name='orders')
+    cm2_daily['date'] = pd.to_datetime(cm2_daily['date'])
+    cm2_daily = cm2_daily.sort_values('date')
+    
+    # 计算CM2累计订单数
+    cm2_daily['cumulative'] = cm2_daily['orders'].cumsum()
+    
+    # 存储CM2数据（仅保留最后一天）
+    if not cm2_daily.empty:
+        last_row = cm2_daily.iloc[-1]
+        days_from_start = (last_row['date'] - cm2_start).days + 1
+        description_data['cm2_daily'].append({
+            'date': last_row['date'].strftime('%Y-%m-%d'),
+            'day_n': days_from_start,
+            'orders': last_row['orders']
+        })
+        description_data['cm2_cumulative'].append({
+            'date': last_row['date'].strftime('%Y-%m-%d'),
+            'day_n': days_from_start,
+            'cumulative_orders': last_row['cumulative']
+        })
+    
+    # 处理其他车型的同期数据
+    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+        if vehicle not in vehicle_data or len(vehicle_data[vehicle]) == 0:
+            continue
+            
+        vehicle_start = pd.to_datetime(presale_periods[vehicle]['start'])
+        vehicle_data_copy = vehicle_data[vehicle].copy()
+        vehicle_data_copy['date'] = vehicle_data_copy['Intention_Payment_Time'].dt.date
+        vehicle_daily = vehicle_data_copy.groupby('date').size().reset_index(name='orders')
+        vehicle_daily['date'] = pd.to_datetime(vehicle_daily['date'])
+        vehicle_daily = vehicle_daily.sort_values('date')
+        vehicle_daily['cumulative'] = vehicle_daily['orders'].cumsum()
+        
+        description_data['comparison_daily'][vehicle] = []
+        description_data['comparison_cumulative'][vehicle] = []
+        
+        # 对比相同相对天数的数据（仅保留最后一天）
+        if not cm2_daily.empty:
+            cm2_row = cm2_daily.iloc[-1]
+            cm2_date = cm2_row['date']
+            days_from_start = (cm2_date - cm2_start).days
+            
+            # 找到对应的历史车型日期
+            target_date = vehicle_start + pd.Timedelta(days=days_from_start)
+            
+            # 查找对应日期的订单量
+            vehicle_orders_on_date = vehicle_daily[vehicle_daily['date'] == target_date]
+            
+            if not vehicle_orders_on_date.empty:
+                vehicle_orders = vehicle_orders_on_date.iloc[0]['orders']
+                vehicle_cumulative = vehicle_daily[vehicle_daily['date'] <= target_date]['orders'].sum()
+                
+                description_data['comparison_daily'][vehicle].append({
+                    'cm2_date': cm2_date.strftime('%Y-%m-%d'),
+                    'vehicle_date': target_date.strftime('%Y-%m-%d'),
+                    'day_n': days_from_start + 1,
+                    'orders': vehicle_orders
+                })
+                description_data['comparison_cumulative'][vehicle].append({
+                    'cm2_date': cm2_date.strftime('%Y-%m-%d'),
+                    'vehicle_date': target_date.strftime('%Y-%m-%d'),
+                    'day_n': days_from_start + 1,
+                    'cumulative_orders': vehicle_cumulative
+                })
+    
+    return description_data
+
 # 生成结构检查报告
 def generate_structure_report(state, vehicle_data, anomalies):
     """
@@ -799,6 +1009,11 @@ def generate_structure_report(state, vehicle_data, anomalies):
     demographic_anomalies_hist = [a for a in anomalies if '[历史对比]' in a and any(demo_type in a for demo_type in ['性别', '年龄段'])]
     demographic_anomalies_cm1 = [a for a in anomalies if '[CM1对比]' in a and any(demo_type in a for demo_type in ['性别', '年龄段'])]
     
+    # 同比/环比异常
+    time_series_anomalies_daily = [a for a in anomalies if '[日环比]' in a]
+    time_series_anomalies_period = [a for a in anomalies if '[同周期对比]' in a]
+    time_series_anomalies_cumulative = [a for a in anomalies if '[累计同周期对比]' in a]
+    
     # 地区分布异常
     report_content += "### 🌍 地区分布异常检测\n\n"
     
@@ -806,9 +1021,33 @@ def generate_structure_report(state, vehicle_data, anomalies):
     report_content += "#### 📊 CM2 vs 历史平均对比\n\n"
     if region_anomalies_hist:
         report_content += "**🚨 发现地区分布异常:**\n\n"
+        report_content += "| 序号 | 地区类型 | 地区名称 | CM2占比 | 历史平均占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|----------|---------|-------------|----------|----------|\n"
+        
         for i, anomaly in enumerate(region_anomalies_hist, 1):
             clean_anomaly = anomaly.replace('[历史对比]', '')
-            report_content += f"{i}. {clean_anomaly}\n"
+            
+            # 解析异常信息
+            region_type_match = re.search(r'(Parent Region Name|License Province|license_city_level|License City)中(.+?)地区', clean_anomaly)
+            cm2_match = re.search(r'CM2为([\d.]+%)', clean_anomaly)
+            hist_match = re.search(r'历史平均为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            region_type = region_type_match.group(1) if region_type_match else ""
+            region_name = region_type_match.group(2) if region_type_match else ""
+            cm2_ratio = cm2_match.group(1) if cm2_match else ""
+            hist_ratio = hist_match.group(1) if hist_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {region_type} | {region_name} | {cm2_ratio} | {hist_ratio} | {change_rate} | {anomaly_type} |\n"
     else:
         report_content += "**✅ 地区分布正常:** 所有地区订单占比变化均在20%阈值范围内。\n"
     
@@ -816,9 +1055,33 @@ def generate_structure_report(state, vehicle_data, anomalies):
     report_content += "\n#### 🔄 CM2 vs CM1直接对比\n\n"
     if region_anomalies_cm1:
         report_content += "**🚨 发现地区分布异常:**\n\n"
+        report_content += "| 序号 | 地区类型 | 地区名称 | CM2占比 | CM1占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|----------|---------|---------|----------|----------|\n"
+        
         for i, anomaly in enumerate(region_anomalies_cm1, 1):
             clean_anomaly = anomaly.replace('[CM1对比]', '')
-            report_content += f"{i}. {clean_anomaly}\n"
+            
+            # 解析异常信息
+            region_type_match = re.search(r'(Parent Region Name|License Province|license_city_level|License City)中(.+?)地区', clean_anomaly)
+            cm2_match = re.search(r'CM2为([\d.]+%)', clean_anomaly)
+            cm1_match = re.search(r'CM1为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            region_type = region_type_match.group(1) if region_type_match else ""
+            region_name = region_type_match.group(2) if region_type_match else ""
+            cm2_ratio = cm2_match.group(1) if cm2_match else ""
+            cm1_ratio = cm1_match.group(1) if cm1_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {region_type} | {region_name} | {cm2_ratio} | {cm1_ratio} | {change_rate} | {anomaly_type} |\n"
     else:
         report_content += "**✅ 地区分布正常:** 相比CM1，所有地区订单占比变化均在20%阈值范围内。\n"
     
@@ -829,9 +1092,32 @@ def generate_structure_report(state, vehicle_data, anomalies):
     report_content += "#### 📊 CM2 vs 历史平均对比\n\n"
     if channel_anomalies_hist:
         report_content += "**🚨 发现渠道结构异常:**\n\n"
+        report_content += "| 序号 | 渠道名称 | CM2占比 | 历史平均占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|---------|-------------|----------|----------|\n"
+        
         for i, anomaly in enumerate(channel_anomalies_hist, 1):
             clean_anomaly = anomaly.replace('[历史对比]', '')
-            report_content += f"{i}. {clean_anomaly}\n"
+            
+            # 解析异常信息
+            channel_match = re.search(r'渠道(.+?)销量占比', clean_anomaly)
+            cm2_match = re.search(r'CM2为([\d.]+%)', clean_anomaly)
+            hist_match = re.search(r'历史平均为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            channel_name = channel_match.group(1) if channel_match else ""
+            cm2_ratio = cm2_match.group(1) if cm2_match else ""
+            hist_ratio = hist_match.group(1) if hist_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {channel_name} | {cm2_ratio} | {hist_ratio} | {change_rate} | {anomaly_type} |\n"
     else:
         report_content += "**✅ 渠道结构正常:** 所有渠道销量占比变化均在15%阈值范围内。\n"
     
@@ -839,9 +1125,32 @@ def generate_structure_report(state, vehicle_data, anomalies):
     report_content += "\n#### 🔄 CM2 vs CM1直接对比\n\n"
     if channel_anomalies_cm1:
         report_content += "**🚨 发现渠道结构异常:**\n\n"
+        report_content += "| 序号 | 渠道名称 | CM2占比 | CM1占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|---------|---------|----------|----------|\n"
+        
         for i, anomaly in enumerate(channel_anomalies_cm1, 1):
             clean_anomaly = anomaly.replace('[CM1对比]', '')
-            report_content += f"{i}. {clean_anomaly}\n"
+            
+            # 解析异常信息
+            channel_match = re.search(r'渠道(.+?)销量占比', clean_anomaly)
+            cm2_match = re.search(r'CM2为([\d.]+%)', clean_anomaly)
+            cm1_match = re.search(r'CM1为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            channel_name = channel_match.group(1) if channel_match else ""
+            cm2_ratio = cm2_match.group(1) if cm2_match else ""
+            cm1_ratio = cm1_match.group(1) if cm1_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {channel_name} | {cm2_ratio} | {cm1_ratio} | {change_rate} | {anomaly_type} |\n"
     else:
         report_content += "**✅ 渠道结构正常:** 相比CM1，所有渠道销量占比变化均在15%阈值范围内。\n"
     
@@ -852,9 +1161,33 @@ def generate_structure_report(state, vehicle_data, anomalies):
     report_content += "#### 📊 CM2 vs 历史平均对比\n\n"
     if demographic_anomalies_hist:
         report_content += "**🚨 发现人群结构异常:**\n\n"
+        report_content += "| 序号 | 人群类型 | 人群名称 | CM2占比 | 历史平均占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|----------|---------|-------------|----------|----------|\n"
+        
         for i, anomaly in enumerate(demographic_anomalies_hist, 1):
             clean_anomaly = anomaly.replace('[历史对比]', '')
-            report_content += f"{i}. {clean_anomaly}\n"
+            
+            # 解析异常信息
+            demo_match = re.search(r'(性别|年龄段)(.+?)比例异常', clean_anomaly)
+            cm2_match = re.search(r'CM2为([\d.]+%)', clean_anomaly)
+            hist_match = re.search(r'历史平均为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            demo_type = demo_match.group(1) if demo_match else ""
+            demo_name = demo_match.group(2) if demo_match else ""
+            cm2_ratio = cm2_match.group(1) if cm2_match else ""
+            hist_ratio = hist_match.group(1) if hist_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {demo_type} | {demo_name} | {cm2_ratio} | {hist_ratio} | {change_rate} | {anomaly_type} |\n"
     else:
         report_content += "**✅ 人群结构正常:** 所有性别比例和年龄段结构变化均在10%阈值范围内。\n"
     
@@ -862,11 +1195,168 @@ def generate_structure_report(state, vehicle_data, anomalies):
     report_content += "\n#### 🔄 CM2 vs CM1直接对比\n\n"
     if demographic_anomalies_cm1:
         report_content += "**🚨 发现人群结构异常:**\n\n"
+        report_content += "| 序号 | 人群类型 | 人群名称 | CM2占比 | CM1占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|----------|---------|---------|----------|----------|\n"
+        
         for i, anomaly in enumerate(demographic_anomalies_cm1, 1):
             clean_anomaly = anomaly.replace('[CM1对比]', '')
-            report_content += f"{i}. {clean_anomaly}\n"
+            
+            # 解析异常信息
+            demo_match = re.search(r'(性别|年龄段)(.+?)比例异常', clean_anomaly)
+            cm2_match = re.search(r'CM2为([\d.]+%)', clean_anomaly)
+            cm1_match = re.search(r'CM1为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            demo_type = demo_match.group(1) if demo_match else ""
+            demo_name = demo_match.group(2) if demo_match else ""
+            cm2_ratio = cm2_match.group(1) if cm2_match else ""
+            cm1_ratio = cm1_match.group(1) if cm1_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {demo_type} | {demo_name} | {cm2_ratio} | {cm1_ratio} | {change_rate} | {anomaly_type} |\n"
     else:
         report_content += "**✅ 人群结构正常:** 相比CM1，所有性别比例和年龄段结构变化均在10%阈值范围内。\n"
+    
+    # 同比/环比异常
+    report_content += "\n### 📈 同比/环比异常检测\n\n"
+    
+    # 生成日环比描述数据
+    time_series_desc = generate_time_series_description(vehicle_data, state.get('presale_periods', {}))
+    
+    # 日环比描述
+    report_content += "#### 📊 日环比描述\n\n"
+    
+    # CM2日订单数描述
+    if time_series_desc['cm2_daily']:
+        report_content += "**CM2车型日订单数:**\n\n"
+        for data in time_series_desc['cm2_daily']:  # 显示所有天数
+            report_content += f"- 第{data['day_n']}日 ({data['date']}): {data['orders']}单\n"
+    
+    # 同期其他车型日订单数
+    report_content += "\n**同期其他车型日订单数对比:**\n\n"
+    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+        if vehicle in time_series_desc['comparison_daily'] and time_series_desc['comparison_daily'][vehicle]:
+            report_content += f"- **{vehicle}车型**: "
+            for data in time_series_desc['comparison_daily'][vehicle]:  # 显示所有天数
+                report_content += f"第{data['day_n']}日({data['vehicle_date']}):{data['orders']}单; "
+            report_content += "\n"
+    
+    # CM2累计订单数描述
+    if time_series_desc['cm2_cumulative']:
+        report_content += "\n**CM2车型累计订单数:**\n\n"
+        for data in time_series_desc['cm2_cumulative']:  # 显示所有天数
+            report_content += f"- 第{data['day_n']}日 ({data['date']}): 累计{data['cumulative_orders']}单\n"
+    
+    # 同期其他车型累计订单数
+    report_content += "\n**同期其他车型累计订单数对比:**\n\n"
+    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+        if vehicle in time_series_desc['comparison_cumulative'] and time_series_desc['comparison_cumulative'][vehicle]:
+            report_content += f"- **{vehicle}车型**: "
+            for data in time_series_desc['comparison_cumulative'][vehicle]:  # 显示所有天数
+                report_content += f"第{data['day_n']}日({data['vehicle_date']}):累计{data['cumulative_orders']}单; "
+            report_content += "\n"
+    
+    # 日环比异常
+    report_content += "\n#### 📅 日环比异常检测\n\n"
+    if time_series_anomalies_daily:
+        report_content += "**🚨 发现日环比异常:**\n\n"
+        for i, anomaly in enumerate(time_series_anomalies_daily, 1):
+            clean_anomaly = anomaly.replace('[日环比]', '')
+            report_content += f"{i}. {clean_anomaly}\n"
+    else:
+        report_content += "**✅ 日环比正常:** CM2车型日订单量变化均在50%阈值范围内。\n"
+    
+    # 同周期对比异常
+    report_content += "\n#### 🔄 同周期对比异常检测\n\n"
+    if time_series_anomalies_period:
+        report_content += "**🚨 发现同周期对比异常:**\n\n"
+        report_content += "| 序号 | 日期 | CM2订单数 | 对比车型 | 对比车型订单数 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|------|----------|----------|----------------|----------|----------|\n"
+        for i, anomaly in enumerate(time_series_anomalies_period, 1):
+            clean_anomaly = anomaly.replace('[同周期对比]', '')
+            
+            # 解析异常信息
+            parts = clean_anomaly.split('：')
+            if len(parts) >= 2:
+                desc_part = parts[0]
+                data_part = parts[1]
+                
+                # 提取日期
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', desc_part)
+                date = date_match.group(1) if date_match else ""
+                
+                # 提取对比车型
+                vehicle_match = re.search(r'相对(CM\d|DM\d)同期', desc_part)
+                compare_vehicle = vehicle_match.group(1) if vehicle_match else ""
+                
+                # 提取异常类型并添加emoji
+                if "骤增" in desc_part:
+                    anomaly_type = "📈 骤增"
+                else:
+                    anomaly_type = "📉 骤降"
+                
+                # 提取数据
+                cm2_match = re.search(r'CM2为(\d+)单', data_part)
+                compare_match = re.search(r'{}同期为(\d+)单'.format(compare_vehicle), data_part)
+                change_match = re.search(r'变化幅度([+-]?\d+\.\d+)%', data_part)
+                
+                cm2_orders = cm2_match.group(1) if cm2_match else ""
+                compare_orders = compare_match.group(1) if compare_match else ""
+                change_rate = change_match.group(1) + "%" if change_match else ""
+                
+                report_content += f"| {i} | {date} | {cm2_orders} | {compare_vehicle} | {compare_orders} | {change_rate} | {anomaly_type} |\n"
+    else:
+        report_content += "**✅ 同周期对比正常:** CM2相对于历史车型同期订单量变化均在100%阈值范围内。\n"
+    
+    # 累计同周期对比异常
+    report_content += "\n#### 📊 累计同周期对比异常检测\n\n"
+    if time_series_anomalies_cumulative:
+        report_content += "**🚨 发现累计同周期对比异常:**\n\n"
+        report_content += "| 序号 | 截至日期 | CM2累计订单数 | 对比车型 | 对比车型累计订单数 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|---------------|----------|-------------------|----------|----------|\n"
+        for i, anomaly in enumerate(time_series_anomalies_cumulative, 1):
+            clean_anomaly = anomaly.replace('[累计同周期对比]', '')
+            
+            # 解析异常信息
+            parts = clean_anomaly.split('：')
+            if len(parts) >= 2:
+                desc_part = parts[0]
+                data_part = parts[1]
+                
+                # 提取日期
+                date_match = re.search(r'截至(\d{4}-\d{2}-\d{2})', desc_part)
+                date = date_match.group(1) if date_match else ""
+                
+                # 提取对比车型
+                vehicle_match = re.search(r'相对(CM\d|DM\d)同期', desc_part)
+                compare_vehicle = vehicle_match.group(1) if vehicle_match else ""
+                
+                # 提取异常类型并添加emoji
+                if "骤增" in desc_part:
+                    anomaly_type = "📈 骤增"
+                else:
+                    anomaly_type = "📉 骤降"
+                
+                # 提取数据
+                cm2_match = re.search(r'CM2累计(\d+)单', data_part)
+                compare_match = re.search(r'{}同期累计(\d+)单'.format(compare_vehicle), data_part)
+                change_match = re.search(r'变化幅度([+-]?\d+\.\d+)%', data_part)
+                
+                cm2_orders = cm2_match.group(1) if cm2_match else ""
+                compare_orders = compare_match.group(1) if compare_match else ""
+                change_rate = change_match.group(1) + "%" if change_match else ""
+                
+                report_content += f"| {i} | {date} | {cm2_orders} | {compare_vehicle} | {compare_orders} | {change_rate} | {anomaly_type} |\n"
+    else:
+        report_content += "**✅ 累计同周期对比正常:** CM2累计订单量相对于历史车型同期变化均在100%阈值范围内。\n"
     
     report_content += "\n## 检查说明\n\n"
     report_content += "### 📊 历史平均对比\n"
@@ -876,7 +1366,11 @@ def generate_structure_report(state, vehicle_data, anomalies):
     report_content += "### 🔄 CM1直接对比\n"
     report_content += "- **地区分布异常**: 检查CM2相对于CM1车型的各地区订单占比变化超过20%的情况，且该地区占比超过1%\n"
     report_content += "- **渠道结构异常**: 检查CM2相对于CM1车型的渠道销量占比变化超过15%的情况，且该渠道占比超过1%\n"
-    report_content += "- **人群结构异常**: 检查CM2相对于CM1车型的性别比例和年龄段结构变化超过10%的情况\n"
+    report_content += "- **人群结构异常**: 检查CM2相对于CM1车型的性别比例和年龄段结构变化超过10%的情况\n\n"
+    report_content += "### 📈 同比/环比检测\n"
+    report_content += "- **日环比异常**: 检查CM2车型内部相邻日期订单量变化超过50%的情况\n"
+    report_content += "- **同周期对比异常**: 检查CM2相对于历史车型(CM0, CM1, DM0, DM1)相同相对天数的订单量变化超过50%的情况\n"
+    report_content += "- **累计同周期对比异常**: 检查CM2累计订单量相对于历史车型同期累计订单量变化超过50%的情况\n"
     
     # 保存报告
     report_path = "/Users/zihao_/Documents/github/W35_workflow/structure_check_report.md"
