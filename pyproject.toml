@@ -1,0 +1,11 @@
+[project]
+name = "w35-workflow"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "langgraph>=0.6.6",
+    "pandas>=2.3.2",
+    "pyarrow>=21.0.0",
+]
