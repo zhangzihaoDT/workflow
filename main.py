@@ -483,12 +483,12 @@ def analyze_region_distribution(vehicle_data):
                 hist_ratio = avg_historical.get(region, 0)
                 
                 # 计算变化幅度（相对变化率）
-                if hist_ratio > 0:
+                if hist_ratio > 0 and cm2_ratio > 0.01:  # 增加占比超过1%的条件
                     change_rate = abs(cm2_ratio - hist_ratio) / hist_ratio
                     if change_rate > 0.2:  # 20%变化幅度阈值
                         change_direction = "增长" if cm2_ratio > hist_ratio else "下降"
                         anomalies.append(f"[历史对比]{region_col}中{region}地区订单占比异常{change_direction}：CM2为{cm2_ratio:.2%}，历史平均为{hist_ratio:.2%}，变化幅度{change_rate:.1%}")
-                elif cm2_ratio > 0.02:  # 新出现的地区，占比超过2%
+                elif cm2_ratio > 0.01:  # 新出现的地区，占比超过1%
                     anomalies.append(f"[历史对比]{region_col}中{region}地区为新出现区域：CM2占比{cm2_ratio:.2%}，历史无数据")
     
     # 2. CM2 vs CM1直接对比异常检测
@@ -511,12 +511,12 @@ def analyze_region_distribution(vehicle_data):
                 cm1_ratio = cm1_region_dist.get(region, 0)
                 
                 # 计算变化幅度（相对变化率）
-                if cm1_ratio > 0:
+                if cm1_ratio > 0 and cm2_ratio > 0.01:  # 增加占比超过1%的条件
                     change_rate = abs(cm2_ratio - cm1_ratio) / cm1_ratio
                     if change_rate > 0.2:  # 20%变化幅度阈值
                         change_direction = "增长" if cm2_ratio > cm1_ratio else "下降"
                         anomalies.append(f"[CM1对比]{region_col}中{region}地区订单占比异常{change_direction}：CM2为{cm2_ratio:.2%}，CM1为{cm1_ratio:.2%}，变化幅度{change_rate:.1%}")
-                elif cm2_ratio > 0.02:  # 新出现的地区，占比超过2%
+                elif cm2_ratio > 0.01:  # 新出现的地区，占比超过1%
                     anomalies.append(f"[CM1对比]{region_col}中{region}地区为新出现区域：CM2占比{cm2_ratio:.2%}，CM1无数据")
     
     return anomalies
@@ -568,12 +568,12 @@ def analyze_channel_structure(vehicle_data):
             hist_ratio = avg_historical.get(channel, 0)
             
             # 计算变化幅度（相对变化率）
-            if hist_ratio > 0:
+            if hist_ratio > 0 and cm2_ratio > 0.01:  # 增加占比超过1%的条件
                 change_rate = abs(cm2_ratio - hist_ratio) / hist_ratio
                 if change_rate > 0.15:  # 15%变化幅度阈值
                     change_direction = "增长" if cm2_ratio > hist_ratio else "下降"
                     anomalies.append(f"[历史对比]渠道{channel}销量占比异常{change_direction}：CM2为{cm2_ratio:.2%}，历史平均为{hist_ratio:.2%}，变化幅度{change_rate:.1%}")
-            elif cm2_ratio > 0.03:  # 新出现的渠道，占比超过3%
+            elif cm2_ratio > 0.01:  # 新出现的渠道，占比超过1%
                 anomalies.append(f"[历史对比]渠道{channel}为新出现渠道：CM2占比{cm2_ratio:.2%}，历史无数据")
     
     # 2. CM2 vs CM1直接对比异常检测
@@ -592,12 +592,12 @@ def analyze_channel_structure(vehicle_data):
             cm1_ratio = cm1_channel_dist.get(channel, 0)
             
             # 计算变化幅度（相对变化率）
-            if cm1_ratio > 0:
+            if cm1_ratio > 0 and cm2_ratio > 0.01:  # 增加占比超过1%的条件
                 change_rate = abs(cm2_ratio - cm1_ratio) / cm1_ratio
                 if change_rate > 0.15:  # 15%变化幅度阈值
                     change_direction = "增长" if cm2_ratio > cm1_ratio else "下降"
                     anomalies.append(f"[CM1对比]渠道{channel}销量占比异常{change_direction}：CM2为{cm2_ratio:.2%}，CM1为{cm1_ratio:.2%}，变化幅度{change_rate:.1%}")
-            elif cm2_ratio > 0.03:  # 新出现的渠道，占比超过3%
+            elif cm2_ratio > 0.01:  # 新出现的渠道，占比超过1%
                 anomalies.append(f"[CM1对比]渠道{channel}为新出现渠道：CM2占比{cm2_ratio:.2%}，CM1无数据")
     
     return anomalies
@@ -870,12 +870,12 @@ def generate_structure_report(state, vehicle_data, anomalies):
     
     report_content += "\n## 检查说明\n\n"
     report_content += "### 📊 历史平均对比\n"
-    report_content += "- **地区分布异常**: 检查CM2相对于历史车型(CM0, DM0, CM1, DM1)平均值的各地区订单占比变化超过20%的情况\n"
-    report_content += "- **渠道结构异常**: 检查CM2相对于历史车型平均值的渠道销量占比变化超过15%的情况\n"
+    report_content += "- **地区分布异常**: 检查CM2相对于历史车型(CM0, DM0, CM1, DM1)平均值的各地区订单占比变化超过20%的情况，且该地区占比超过1%\n"
+    report_content += "- **渠道结构异常**: 检查CM2相对于历史车型平均值的渠道销量占比变化超过15%的情况，且该渠道占比超过1%\n"
     report_content += "- **人群结构异常**: 检查CM2相对于历史车型平均值的性别比例和年龄段结构变化超过10%的情况\n\n"
     report_content += "### 🔄 CM1直接对比\n"
-    report_content += "- **地区分布异常**: 检查CM2相对于CM1车型的各地区订单占比变化超过20%的情况\n"
-    report_content += "- **渠道结构异常**: 检查CM2相对于CM1车型的渠道销量占比变化超过15%的情况\n"
+    report_content += "- **地区分布异常**: 检查CM2相对于CM1车型的各地区订单占比变化超过20%的情况，且该地区占比超过1%\n"
+    report_content += "- **渠道结构异常**: 检查CM2相对于CM1车型的渠道销量占比变化超过15%的情况，且该渠道占比超过1%\n"
     report_content += "- **人群结构异常**: 检查CM2相对于CM1车型的性别比例和年龄段结构变化超过10%的情况\n"
     
     # 保存报告
