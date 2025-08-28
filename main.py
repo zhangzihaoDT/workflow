@@ -1528,106 +1528,86 @@ def generate_structure_report(state, vehicle_data, anomalies):
             
             state['time_series_data']['cm2_daily_data'] = cm2_daily
     
+    # 生成退订描述数据
+    refund_desc = generate_refund_description(vehicle_data, state.get('presale_periods', {}))
+    
     # 日环比描述
     report_content += "#### 📊 日环比描述\n\n"
     
-    # CM2日订单数描述
-    if time_series_desc['cm2_daily']:
-        report_content += "**CM2车型日订单数:**\n\n"
-        for data in time_series_desc['cm2_daily']:  # 显示所有天数
-            report_content += f"- 第{data['day_n']}日 ({data['date']}): {data['orders']}单\n"
-    
-    # 同期其他车型日订单数
-    report_content += "\n**同期其他车型日订单数对比:**\n\n"
-    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
-        if vehicle in time_series_desc['comparison_daily'] and time_series_desc['comparison_daily'][vehicle]:
-            report_content += f"- **{vehicle}车型**: "
-            for data in time_series_desc['comparison_daily'][vehicle]:  # 显示所有天数
-                report_content += f"第{data['day_n']}日({data['vehicle_date']}):{data['orders']}单; "
-            report_content += "\n"
-    
-    # CM2累计订单数描述
-    if time_series_desc['cm2_cumulative']:
-        report_content += "\n**CM2车型累计订单数:**\n\n"
-        for data in time_series_desc['cm2_cumulative']:  # 显示所有天数
-            report_content += f"- 第{data['day_n']}日 ({data['date']}): 累计{data['cumulative_orders']}单\n"
-    
-    # 同期其他车型累计订单数
-    report_content += "\n**同期其他车型累计订单数对比:**\n\n"
-    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
-        if vehicle in time_series_desc['comparison_cumulative'] and time_series_desc['comparison_cumulative'][vehicle]:
-            report_content += f"- **{vehicle}车型**: "
-            for data in time_series_desc['comparison_cumulative'][vehicle]:  # 显示所有天数
-                report_content += f"第{data['day_n']}日({data['vehicle_date']}):累计{data['cumulative_orders']}单; "
-            report_content += "\n"
-    
-    # 退订描述
-    report_content += "\n#### 🔄 退订情况描述\n\n"
-    
-    # 生成退订描述数据
-    refund_desc = generate_refund_description(vehicle_data, state.get('presale_periods', {}))
-
-    
-    # CM2日退订数描述
-    if refund_desc['cm2_daily']:
-        report_content += "**CM2车型日退订数:**\n\n"
-        for data in refund_desc['cm2_daily']:
-            report_content += f"- 第{data['day_n']}日 ({data['date']}): {data['refunds']}单\n"
-    else:
-        report_content += "**CM2车型日退订数:** 暂无退订数据\n\n"
-    
-    # 同期其他车型日退订数对比
-    if refund_desc['comparison_daily']:
-        report_content += "\n**同期其他车型日退订数对比:**\n\n"
-        for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
-            if vehicle in refund_desc['comparison_daily'] and refund_desc['comparison_daily'][vehicle]:
-                report_content += f"- **{vehicle}车型**: "
-                for data in refund_desc['comparison_daily'][vehicle]:
-                    report_content += f"第{data['day_n']}日({data['vehicle_date']}):{data['refunds']}单; "
-                report_content += "\n"
-    
-    # CM2累计退订数描述
-    if refund_desc['cm2_cumulative']:
-        report_content += "\n**CM2车型累计退订数:**\n\n"
-        for data in refund_desc['cm2_cumulative']:
-            report_content += f"- 第{data['day_n']}日 ({data['date']}): 累计{data['cumulative_refunds']}单\n"
-    
-    # 同期其他车型累计退订数对比
-    if refund_desc['comparison_cumulative']:
-        report_content += "\n**同期其他车型累计退订数对比:**\n\n"
-        for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
-            if vehicle in refund_desc['comparison_cumulative'] and refund_desc['comparison_cumulative'][vehicle]:
-                report_content += f"- **{vehicle}车型**: "
-                for data in refund_desc['comparison_cumulative'][vehicle]:
-                    report_content += f"第{data['day_n']}日({data['vehicle_date']}):累计{data['cumulative_refunds']}单; "
-                report_content += "\n"
-    
-    # 退订率计算和描述
-    report_content += "\n**退订率分析:**\n\n"
-    
-    # CM2车型退订率
-    if refund_desc['cm2_cumulative'] and time_series_desc['cm2_cumulative']:
-        cm2_refund_data = refund_desc['cm2_cumulative'][0]
-        cm2_order_data = time_series_desc['cm2_cumulative'][0]
+    # CM2当日数据
+    if time_series_desc['cm2_daily'] and time_series_desc['cm2_cumulative']:
+        daily_data = time_series_desc['cm2_daily'][-1]  # 最新一天
+        cumulative_data = time_series_desc['cm2_cumulative'][-1]  # 最新一天累计
+        report_content += f"**CM2车型当日数据 (第{daily_data['day_n']}日, {daily_data['date']}):**\n\n"
+        report_content += f"- 订单数: {daily_data['orders']}单\n"
         
-        cm2_refund_rate = (cm2_refund_data['cumulative_refunds'] / cm2_order_data['cumulative_orders']) * 100
-        report_content += f"- **CM2车型**: 第{cm2_refund_data['day_n']}日 ({cm2_refund_data['date']}) 退订率: {cm2_refund_rate:.2f}% (累计退订{cm2_refund_data['cumulative_refunds']}单/累计订单{cm2_order_data['cumulative_orders']}单)\n"
+        # 获取当日退订数（确保与订单数据日期一致）
+        current_date = daily_data['date']
+        current_refunds = 0
+        
+        # 从CM2退订数据中查找对应日期的退订数
+        cm2_data = vehicle_data.get('CM2')
+        if cm2_data is not None:
+            cm2_refund_data = cm2_data[cm2_data['intention_refund_time'].notna()].copy()
+            if len(cm2_refund_data) > 0:
+                cm2_refund_data['refund_date'] = cm2_refund_data['intention_refund_time'].dt.date
+                refunds_on_date = cm2_refund_data[cm2_refund_data['refund_date'] == pd.to_datetime(current_date).date()]
+                if len(refunds_on_date) > 0:
+                    current_refunds = len(refunds_on_date)
+        
+        report_content += f"- 退订数: {current_refunds}单\n"
     
-    # 同期其他车型退订率对比
-    if refund_desc['comparison_cumulative'] and time_series_desc['comparison_cumulative']:
-        report_content += "\n**同期其他车型退订率对比:**\n\n"
-        for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
-            if (vehicle in refund_desc['comparison_cumulative'] and 
-                refund_desc['comparison_cumulative'][vehicle] and
-                vehicle in time_series_desc['comparison_cumulative'] and 
-                time_series_desc['comparison_cumulative'][vehicle]):
-                
-                refund_data = refund_desc['comparison_cumulative'][vehicle][0]
-                order_data = time_series_desc['comparison_cumulative'][vehicle][0]
-                
-                if order_data['cumulative_orders'] > 0:
-                    refund_rate = (refund_data['cumulative_refunds'] / order_data['cumulative_orders']) * 100
-                    report_content += f"- **{vehicle}车型**: 第{refund_data['day_n']}日({refund_data['vehicle_date']}) 退订率: {refund_rate:.2f}% (累计退订{refund_data['cumulative_refunds']}单/累计订单{order_data['cumulative_orders']}单)\n"
+    # 同期其他车型当日数据对比
+    report_content += "\n**同期其他车型当日数据对比:**\n\n"
+    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+        if (vehicle in time_series_desc['comparison_daily'] and 
+            time_series_desc['comparison_daily'][vehicle] and
+            vehicle in time_series_desc['comparison_cumulative'] and 
+            time_series_desc['comparison_cumulative'][vehicle]):
+            
+            daily_data = time_series_desc['comparison_daily'][vehicle][-1]
+            
+            # 获取退订数（确保与订单数据日期一致）
+            refund_count = 0
+            vehicle_date = daily_data['vehicle_date']
+            
+            # 从对应车型的退订数据中查找对应日期的退订数
+            vehicle_data_for_refund = vehicle_data.get(vehicle)
+            if vehicle_data_for_refund is not None:
+                vehicle_refund_data = vehicle_data_for_refund[vehicle_data_for_refund['intention_refund_time'].notna()].copy()
+                if len(vehicle_refund_data) > 0:
+                    vehicle_refund_data['refund_date'] = vehicle_refund_data['intention_refund_time'].dt.date
+                    refunds_on_date = vehicle_refund_data[vehicle_refund_data['refund_date'] == pd.to_datetime(vehicle_date).date()]
+                    if len(refunds_on_date) > 0:
+                        refund_count = len(refunds_on_date)
+            
+            report_content += f"- **{vehicle}车型** (第{daily_data['day_n']}日, {daily_data['vehicle_date']}): 订单{daily_data['orders']}单, 退订{refund_count}单\n"
+    
+    # CM2累计数据
+    if time_series_desc['cm2_cumulative'] and refund_desc['cm2_cumulative']:
+        cumulative_data = time_series_desc['cm2_cumulative'][-1]
+        refund_cumulative = refund_desc['cm2_cumulative'][-1]
+        refund_rate = (refund_cumulative['cumulative_refunds'] / cumulative_data['cumulative_orders']) * 100
+        
+        report_content += f"\n**CM2车型第{cumulative_data['day_n']}日累计数据:**\n\n"
+        report_content += f"- 累计订单数: {cumulative_data['cumulative_orders']}单\n"
+        report_content += f"- 累计退订数: {refund_cumulative['cumulative_refunds']}单\n"
+        report_content += f"- 退订率: {refund_rate:.2f}%\n"
+    
+    # 同期其他车型累计数据对比
+    report_content += "\n**同期其他车型第N日累计数据对比:**\n\n"
+    for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+        if (vehicle in time_series_desc['comparison_cumulative'] and 
+            time_series_desc['comparison_cumulative'][vehicle] and
+            vehicle in refund_desc['comparison_cumulative'] and 
+            refund_desc['comparison_cumulative'][vehicle]):
+            
+            cumulative_data = time_series_desc['comparison_cumulative'][vehicle][-1]
+            refund_cumulative = refund_desc['comparison_cumulative'][vehicle][-1]
+            
+            if cumulative_data['cumulative_orders'] > 0:
+                refund_rate = (refund_cumulative['cumulative_refunds'] / cumulative_data['cumulative_orders']) * 100
+                report_content += f"- **{vehicle}车型** (第{cumulative_data['day_n']}日): 累计订单{cumulative_data['cumulative_orders']}单, 累计退订{refund_cumulative['cumulative_refunds']}单, 退订率{refund_rate:.2f}%\n"
     
     # 前一天数据描述
     report_content += "\n#### 📅 前一天数据分析\n\n"
