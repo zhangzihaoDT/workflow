@@ -2,12 +2,12 @@
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet
-- **生成时间**: 2025-08-28T10:18:07.403509
-- **文件大小**: 2.84 MB
+- **生成时间**: 2025-09-01T09:01:32.707139
+- **文件大小**: 2.95 MB
 
 ## 数据基本信息
-- **数据形状**: 119848 行 × 21 列
-- **数据完整性**: 86.16%
+- **数据形状**: 124907 行 × 21 列
+- **数据完整性**: 86.09%
 - **重复行数**: 0
 
 ## 数据类型分布
@@ -31,17 +31,17 @@ Intention_Payment_Time, intention_refund_time, first_assign_time, Lock_Time, fir
 
 | 列名 | 缺失数量 | 缺失比例 |
 |------|----------|----------|
-| pre_vehicle_model_type | 104412 | 87.12% |
-| pre_vehicle_model | 105210 | 87.79% |
-| intention_refund_time | 44369 | 37.02% |
-| Lock_Time | 90392 | 75.42% |
-| buyer_age | 2676 | 2.23% |
-| first_touch_time | 742 | 0.62% |
-| license_city_level | 634 | 0.53% |
+| pre_vehicle_model_type | 107973 | 86.44% |
+| pre_vehicle_model | 108954 | 87.23% |
+| intention_refund_time | 48429 | 38.77% |
+| Lock_Time | 95451 | 76.42% |
+| buyer_age | 2724 | 2.18% |
+| first_touch_time | 761 | 0.61% |
+| license_city_level | 665 | 0.53% |
 
 ### 重复数据检查
 ✅ 未发现重复数据
 
 ## 数据质量评估
 - **整体评级**: 一般 ⚠️
-- **完整性得分**: 86.16%
+- **完整性得分**: 86.09%
