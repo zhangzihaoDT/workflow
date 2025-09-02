@@ -2,6 +2,7 @@
 """
 订单趋势线监测脚本
 用于处理订单观察数据并进行基本描述性分析
+包含数据加载、处理和计算逻辑
 """
 
 import pandas as pd
@@ -11,10 +12,188 @@ import logging
 from pathlib import Path
 import datetime
 import os
+import numpy as np
+import duckdb
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# 全局 DuckDB 连接
+_db_connection = None
+
+def get_db_connection():
+    """获取 DuckDB 数据库连接（单例模式）"""
+    global _db_connection
+    if _db_connection is None:
+        _db_connection = duckdb.connect(':memory:')
+        logger.info("创建新的 DuckDB 内存数据库连接")
+    return _db_connection
+
+def initialize_database():
+    """初始化数据库表结构"""
+    conn = get_db_connection()
+    
+    # 创建原始数据表
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw_order_data (
+            "日(Intention Payment Time)" TIMESTAMP,
+            "日(Order Create Time)" TIMESTAMP,
+            "日(Lock Time)" TIMESTAMP,
+            "日(intention_refund_time)" TIMESTAMP,
+            "日(Actual Refund Time)" TIMESTAMP,
+            "DATE([Invoice Upload Time])" TIMESTAMP,
+            "Parent Region Name" VARCHAR,
+            "Province Name" VARCHAR,
+            "first_middle_channel_name" VARCHAR,
+            "平均值 开票价格" DOUBLE
+        )
+    """)
+    
+    # 创建聚合数据表
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS processed_order_data (
+            date DATE,
+            region VARCHAR,
+            province VARCHAR,
+            channel VARCHAR,
+            订单数 INTEGER,
+            小订数 INTEGER,
+            锁单数 INTEGER,
+            开票价格 DOUBLE,
+            退订数 INTEGER
+        )
+    """)
+    
+    logger.info("数据库表结构初始化完成")
+
+def parse_chinese_date(date_str):
+    """解析中文日期格式，如'2025年8月25日'"""
+    if pd.isna(date_str) or date_str == 'nan':
+        return pd.NaT
+    try:
+        # 处理中文日期格式
+        if '年' in str(date_str) and '月' in str(date_str) and '日' in str(date_str):
+            date_str = str(date_str).replace('年', '-').replace('月', '-').replace('日', '')
+            return pd.to_datetime(date_str)
+        else:
+            return pd.to_datetime(date_str, errors='coerce')
+    except:
+        return pd.NaT
+
+def load_real_order_data():
+    """使用 DuckDB 懒加载订单观察数据"""
+    conn = get_db_connection()
+    
+    # 检查是否已经加载过数据
+    result = conn.execute("SELECT COUNT(*) FROM processed_order_data").fetchone()
+    if result[0] > 0:
+        logger.info("数据已存在，直接返回")
+        return conn.execute("SELECT * FROM processed_order_data").df()
+    
+    logger.info("开始加载原始数据到 DuckDB...")
+    
+    # 使用 DuckDB 直接读取 parquet 文件
+    parquet_path = '/Users/zihao_/Documents/coding/dataset/formatted/order_observation_data_merged.parquet'
+    
+    # 清空原始数据表
+    conn.execute("DELETE FROM raw_order_data")
+    
+    # 直接从 parquet 文件插入数据到 DuckDB
+    conn.execute(f"""
+        INSERT INTO raw_order_data 
+        SELECT 
+            "日(Intention Payment Time)",
+            "日(Order Create Time)",
+            "日(Lock Time)",
+            "日(intention_refund_time)",
+            "日(Actual Refund Time)",
+            "DATE([Invoice Upload Time])",
+            "Parent Region Name",
+            "Province Name",
+            "first_middle_channel_name",
+            "平均值 开票价格"
+        FROM read_parquet('{parquet_path}')
+        WHERE "Parent Region Name" IS NOT NULL 
+        AND "Province Name" IS NOT NULL 
+        AND "first_middle_channel_name" IS NOT NULL
+    """)
+    
+    logger.info("原始数据加载完成，开始聚合处理...")
+    
+    # 使用 SQL 进行数据聚合处理
+    conn.execute("""
+        INSERT INTO processed_order_data
+        WITH date_series AS (
+            SELECT DISTINCT date_trunc('day', coalesce(
+                "日(Order Create Time)",
+                "日(Intention Payment Time)", 
+                "日(Lock Time)",
+                "DATE([Invoice Upload Time])",
+                "日(Actual Refund Time)",
+                "日(intention_refund_time)"
+            )) as date
+            FROM raw_order_data
+            WHERE coalesce(
+                "日(Order Create Time)",
+                "日(Intention Payment Time)", 
+                "日(Lock Time)",
+                "DATE([Invoice Upload Time])",
+                "日(Actual Refund Time)",
+                "日(intention_refund_time)"
+            ) IS NOT NULL
+        ),
+        combinations AS (
+            SELECT DISTINCT 
+                "Parent Region Name" as region,
+                "Province Name" as province,
+                "first_middle_channel_name" as channel
+            FROM raw_order_data
+        )
+        SELECT 
+            ds.date::DATE as date,
+            c.region,
+            c.province,
+            c.channel,
+            COUNT(CASE WHEN date_trunc('day', "日(Order Create Time)") = ds.date THEN 1 END) as 订单数,
+            COUNT(CASE WHEN date_trunc('day', "日(Intention Payment Time)") = ds.date THEN 1 END) as 小订数,
+            COUNT(CASE WHEN date_trunc('day', "日(Lock Time)") = ds.date THEN 1 END) as 锁单数,
+            AVG(CASE WHEN date_trunc('day', "DATE([Invoice Upload Time])") = ds.date AND "平均值 开票价格" IS NOT NULL 
+                THEN "平均值 开票价格" END) as 开票价格,
+            COUNT(CASE WHEN (date_trunc('day', "日(Actual Refund Time)") = ds.date OR 
+                           date_trunc('day', "日(intention_refund_time)") = ds.date) THEN 1 END) as 退订数
+        FROM date_series ds
+        CROSS JOIN combinations c
+        LEFT JOIN raw_order_data r ON (
+            c.region = r."Parent Region Name" AND 
+            c.province = r."Province Name" AND 
+            c.channel = r."first_middle_channel_name" AND
+            ds.date IN (
+                date_trunc('day', r."日(Order Create Time)"),
+                date_trunc('day', r."日(Intention Payment Time)"),
+                date_trunc('day', r."日(Lock Time)"),
+                date_trunc('day', r."DATE([Invoice Upload Time])"),
+                date_trunc('day', r."日(Actual Refund Time)"),
+                date_trunc('day', r."日(intention_refund_time)")
+            )
+        )
+        GROUP BY ds.date, c.region, c.province, c.channel
+        HAVING (订单数 + 小订数 + 锁单数 + 退订数) > 0
+        ORDER BY ds.date, c.region, c.province, c.channel
+    """)
+    
+    logger.info("数据聚合处理完成")
+    
+    # 获取处理后的数据
+    processed_data = conn.execute("SELECT * FROM processed_order_data").df()
+    
+    # 保存聚合结果到工作区文件
+    output_file = "/Users/zihao_/Documents/github/W35_workflow/processed_order_data.parquet"
+    processed_data.to_parquet(output_file, index=False)
+    logger.info(f"聚合结果已保存到: {output_file}")
+    
+    # 返回处理后的数据
+    return processed_data
 
 def load_order_data(data_path: str) -> pd.DataFrame:
     """
@@ -36,6 +215,135 @@ def load_order_data(data_path: str) -> pd.DataFrame:
     except Exception as e:
         logger.error(f"数据加载失败: {str(e)}")
         raise
+
+def filter_and_aggregate_data(df, region, province, channel, metric, start_date=None, end_date=None):
+    """使用 DuckDB 筛选和聚合数据"""
+    conn = get_db_connection()
+    
+    # 映射新的字段名称
+    metric_mapping = {
+        "order_volume": "订单数",
+        "small_order_volume": "小订数", 
+        "lock_volume": "锁单数",
+        "avg_price": "开票价格",
+        "refund_volume": "退订数"
+    }
+    
+    actual_metric = metric_mapping.get(metric, metric)
+    
+    # 构建 WHERE 条件
+    where_conditions = []
+    if region != "全部":
+        where_conditions.append(f"region = '{region}'")
+    if province != "全部":
+        where_conditions.append(f"province = '{province}'")
+    if channel != "全部":
+        where_conditions.append(f"channel = '{channel}'")
+    if start_date:
+        where_conditions.append(f"date >= '{start_date}'")
+    if end_date:
+        where_conditions.append(f"date <= '{end_date}'")
+    
+    where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+    
+    # 使用 SQL 进行聚合查询
+    query = f"""
+        WITH aggregated AS (
+            SELECT 
+                date,
+                SUM("{actual_metric}") as "{actual_metric}"
+            FROM processed_order_data
+            {where_clause}
+            GROUP BY date
+            ORDER BY date
+        ),
+        with_change_rate AS (
+            SELECT 
+                date,
+                "{actual_metric}",
+                (("{actual_metric}" - LAG("{actual_metric}") OVER (ORDER BY date)) / 
+                 NULLIF(LAG("{actual_metric}") OVER (ORDER BY date), 0)) * 100 as change_rate
+            FROM aggregated
+        )
+        SELECT * FROM with_change_rate
+    """
+    
+    grouped = conn.execute(query).df()
+    
+    return grouped, actual_metric
+
+def detect_data_anomaly(df, region, province, channel, metric, threshold=1.5, start_date=None, end_date=None):
+    """使用 DuckDB 检测数据异动"""
+    conn = get_db_connection()
+    
+    # 映射新的字段名称
+    metric_mapping = {
+        "order_volume": "订单数",
+        "small_order_volume": "小订数", 
+        "lock_volume": "锁单数",
+        "avg_price": "开票价格",
+        "refund_volume": "退订数"
+    }
+    
+    actual_metric = metric_mapping.get(metric, metric)
+    
+    # 构建 WHERE 条件
+    where_conditions = []
+    if region != "全部":
+        where_conditions.append(f"region = '{region}'")
+    if province != "全部":
+        where_conditions.append(f"province = '{province}'")
+    if channel != "全部":
+        where_conditions.append(f"channel = '{channel}'")
+    if start_date:
+        where_conditions.append(f"date >= '{start_date}'")
+    if end_date:
+        where_conditions.append(f"date <= '{end_date}'")
+    
+    where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+    
+    # 使用 SQL 检测异常值
+    query = f"""
+        WITH aggregated AS (
+            SELECT 
+                date,
+                SUM("{actual_metric}") as "{actual_metric}"
+            FROM processed_order_data
+            {where_clause}
+            GROUP BY date
+        ),
+        stats AS (
+            SELECT 
+                AVG("{actual_metric}") as mean_val,
+                STDDEV("{actual_metric}") as std_val
+            FROM aggregated
+        ),
+        anomalies AS (
+            SELECT 
+                a.date,
+                a."{actual_metric}",
+                s.mean_val,
+                s.std_val,
+                (a."{actual_metric}" - s.mean_val) / s.std_val as z_score
+            FROM aggregated a
+            CROSS JOIN stats s
+            WHERE a."{actual_metric}" > s.mean_val + {threshold} * s.std_val
+            ORDER BY a.date
+        )
+        SELECT * FROM anomalies
+    """
+    
+    anomalies = conn.execute(query).df()
+    
+    if anomalies.empty:
+        return "暂无显著异常"
+    
+    # 格式化输出
+    result_lines = []
+    for _, row in anomalies.iterrows():
+        result_lines.append(f"日期: {row['date']}, {actual_metric}: {row[actual_metric]:.2f}, Z-Score: {row['z_score']:.2f}")
+    
+    return "\n".join(result_lines)
 
 def analyze_data_structure(data: pd.DataFrame) -> Dict[str, Any]:
     """
@@ -243,12 +551,18 @@ def main():
     主函数
     """
     # 数据文件路径
-    data_path = "/Users/zihao_/Documents/coding/dataset/formatted/order_observation_data.parquet"
+    data_path = "/Users/zihao_/Documents/coding/dataset/formatted/order_observation_data_merged.parquet"
     
     try:
         logger.info("启动订单趋势线监测脚本...")
         
-        # 加载数据
+        # 初始化数据库
+        initialize_database()
+        
+        # 加载并聚合数据（这会生成聚合数据文件）
+        aggregated_data = load_real_order_data()
+        
+        # 加载原始数据用于分析
         data = load_order_data(data_path)
         
         # 分析数据结构

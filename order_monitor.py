@@ -3,59 +3,54 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
+from datetime import datetime
 
-# ====== 模拟多维度销量数据 ======
-def mock_sales_data():
-    np.random.seed(42)
-    dates = pd.date_range("2025-01-01", "2025-01-15")
+# 从 order_trend_monitor 模块导入数据处理函数
+from order_trend_monitor import filter_and_aggregate_data, detect_data_anomaly, initialize_database, get_db_connection
+import os
 
-    regions = ["华东", "华南", "西南"]
-    provinces = {"华东": ["上海", "江苏"], "华南": ["广东", "广西"], "西南": ["四川", "重庆"]}
-    channels = ["直营", "经销商", "电商"]
+# ====== 加载预处理的聚合数据 ======
+def load_processed_data():
+    """从工作区文件加载预处理的聚合数据"""
+    processed_file = "/Users/zihao_/Documents/github/W35_workflow/processed_order_data.parquet"
+    
+    if not os.path.exists(processed_file):
+        raise FileNotFoundError(f"聚合数据文件不存在: {processed_file}。请先运行 order_trend_monitor.py 生成聚合数据。")
+    
+    # 读取预处理的数据
+    df = pd.read_parquet(processed_file)
+    
+    # 初始化数据库并将数据加载到 DuckDB
+    initialize_database()
+    conn = get_db_connection()
+    
+    # 清空并重新加载数据到 processed_order_data 表
+    conn.execute("DELETE FROM processed_order_data")
+    conn.register('temp_df', df)
+    conn.execute("""
+        INSERT INTO processed_order_data 
+        SELECT * FROM temp_df
+    """)
+    
+    return df
 
-    data = []
-    for date in dates:
-        for region in regions:
-            for prov in provinces[region]:
-                for ch in channels:
-                    order_vol = np.random.randint(50, 200)
-                    lock_vol = np.random.randint(30, min(150, order_vol))  # 锁单量不超过订单量
-                    data.append({
-                        "date": date,
-                        "region": region,
-                        "province": prov,
-                        "channel": ch,
-                        "order_volume": order_vol,  # 订单量（领先指标）
-                        "small_order_volume": np.random.randint(10, order_vol//2),  # 小订量
-                        "lock_volume": lock_vol,  # 锁单量（确认指标）
-                        "avg_price": np.random.randint(15, 30) * 1e4,  # 成交均价（价值指标）
-                        "refund_volume": np.random.randint(0, min(20, lock_vol//3)),  # 退订量（风险指标）
-                    })
-    return pd.DataFrame(data)
-
-df = mock_sales_data()
+df = load_processed_data()
 
 # ====== 趋势绘图函数 ======
-def plot_trends(region, province, channel, metric):
-    dff = df.copy()
-    if region != "全部":
-        dff = dff[dff["region"] == region]
-    if province != "全部":
-        dff = dff[dff["province"] == province]
-    if channel != "全部":
-        dff = dff[dff["channel"] == channel]
-
-    grouped = dff.groupby("date")[metric].sum().reset_index()
+def plot_trends(region, province, channel, metric, start_date, end_date):
+    # 验证日期格式
+    start_date = start_date.strip() if start_date and start_date.strip() else None
+    end_date = end_date.strip() if end_date and end_date.strip() else None
     
-    # 计算边际变化率
-    grouped['change_rate'] = grouped[metric].pct_change() * 100
+    # 使用导入的数据处理函数
+    grouped, actual_metric = filter_and_aggregate_data(df, region, province, channel, metric, start_date, end_date)
     
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=grouped["date"], 
-        y=grouped[metric], 
+        y=grouped[actual_metric], 
         mode='lines+markers',
-        name=metric,
+        name=actual_metric,
         line=dict(width=2),
         marker=dict(size=6),
         hovertemplate='日期: %{x}<br>数值: %{y}<br>变化率: %{customdata:.1f}%<extra></extra>',
@@ -75,31 +70,28 @@ def plot_trends(region, province, channel, metric):
         title=f"{metric_names.get(metric, metric)} 趋势 - {region}/{province}/{channel}",
         xaxis_title="日期",
         yaxis_title=metric_names.get(metric, metric),
-        width=700,
-        height=350,
+        # width=700,
+        height=450,
         showlegend=False,
         hovermode='x unified'
     )
     return fig
 
 # ====== 异动监测函数 ======
-def detect_anomaly(region, province, channel, metric, threshold=1.5):
-    dff = df.copy()
-    if region != "全部":
-        dff = dff[dff["region"] == region]
-    if province != "全部":
-        dff = dff[dff["province"] == province]
-    if channel != "全部":
-        dff = dff[dff["channel"] == channel]
-
-    grouped = dff.groupby("date")[metric].sum().reset_index()
-
-    series = grouped[metric]
-    mean, std = series.mean(), series.std()
-    anomalies = grouped[series > mean + threshold * std]
-    if anomalies.empty:
-        return "暂无显著异常"
-    return anomalies.to_string(index=False)
+def detect_anomaly(region, province, channel, metric, threshold=1.5, start_date=None, end_date=None):
+    # 验证日期格式，处理可能的 float 类型输入
+    if isinstance(start_date, str):
+        start_date = start_date.strip() if start_date and start_date.strip() else None
+    else:
+        start_date = None
+        
+    if isinstance(end_date, str):
+        end_date = end_date.strip() if end_date and end_date.strip() else None
+    else:
+        end_date = None
+    
+    # 使用导入的异动检测函数
+    return detect_data_anomaly(df, region, province, channel, metric, threshold, start_date, end_date)
 
 # ====== Gradio 界面 ======
 with gr.Blocks(theme="soft") as demo:
@@ -117,7 +109,27 @@ with gr.Blocks(theme="soft") as demo:
                 label="选择监测指标",
                 value="lock_volume"
             )
+            
+            # 添加日期范围选择器
+            with gr.Row():
+                start_date = gr.Textbox(
+                    label="开始日期",
+                    value="2024-01-01",
+                    placeholder="YYYY-MM-DD",
+                    scale=1
+                )
+                end_date = gr.Textbox(
+                    label="结束日期",
+                    value="2024-12-31",
+                    placeholder="YYYY-MM-DD",
+                    scale=1
+                )
+            
             plot_out = gr.Plot(label="📈 趋势图")
+            
+            # 异动检测按钮和结果
+            with gr.Row():
+                anomaly_btn = gr.Button("🔍 执行异动检测", variant="primary")
             anomaly_out = gr.Textbox(label="📊 异动监测结果", interactive=False)
 
         with gr.Column(scale=1):
@@ -148,17 +160,17 @@ with gr.Blocks(theme="soft") as demo:
     region_choice.change(fn=update_province, inputs=region_choice, outputs=province_choice)
 
     # ====== 交互逻辑 ======
-    inputs = [region_choice, province_choice, channel_choice, metric_choice]
+    inputs = [region_choice, province_choice, channel_choice, metric_choice, start_date, end_date]
     region_choice.change(fn=plot_trends, inputs=inputs, outputs=plot_out)
     province_choice.change(fn=plot_trends, inputs=inputs, outputs=plot_out)
     channel_choice.change(fn=plot_trends, inputs=inputs, outputs=plot_out)
     metric_choice.change(fn=plot_trends, inputs=inputs, outputs=plot_out)
+    start_date.change(fn=plot_trends, inputs=inputs, outputs=plot_out)
+    end_date.change(fn=plot_trends, inputs=inputs, outputs=plot_out)
 
-    region_choice.change(fn=detect_anomaly, inputs=inputs+[threshold_slider], outputs=anomaly_out)
-    province_choice.change(fn=detect_anomaly, inputs=inputs+[threshold_slider], outputs=anomaly_out)
-    channel_choice.change(fn=detect_anomaly, inputs=inputs+[threshold_slider], outputs=anomaly_out)
-    metric_choice.change(fn=detect_anomaly, inputs=inputs+[threshold_slider], outputs=anomaly_out)
-    threshold_slider.change(fn=detect_anomaly, inputs=inputs+[threshold_slider], outputs=anomaly_out)
+    # 异动检测按钮点击事件
+    anomaly_inputs = inputs + [threshold_slider]
+    anomaly_btn.click(fn=detect_anomaly, inputs=anomaly_inputs, outputs=anomaly_out)
 
 # 启动
 demo.launch()
