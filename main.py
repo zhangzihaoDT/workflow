@@ -534,6 +534,79 @@ def analyze_region_distribution(vehicle_data):
                 elif cm2_ratio > 0.01:  # 新出现的地区，占比超过1%
                     anomalies.append(f"[CM1对比]{region_col}中{region}地区为新出现区域：CM2占比{cm2_ratio:.2%}，CM1无数据")
     
+    # 3. CM2退订 vs CM2整体对比异常检测
+    if cm2_data is not None and len(cm2_data) > 0:
+        # 筛选退订数据（基于intention_refund_time字段不为空）
+        refund_data = None
+        if 'intention_refund_time' in cm2_data.columns:
+            refund_data = cm2_data[cm2_data['intention_refund_time'].notna()]
+        
+        if refund_data is not None and len(refund_data) > 0:
+            for region_col in ['Parent Region Name', 'License Province', 'license_city_level', 'License City']:
+                if region_col not in cm2_data.columns:
+                    continue
+                    
+                # CM2退订和整体地区分布
+                refund_region_dist = refund_data[region_col].value_counts(normalize=True)
+                overall_region_dist = cm2_data[region_col].value_counts(normalize=True)
+                
+                # 获取所有地区
+                all_regions = set(refund_region_dist.index) | set(overall_region_dist.index)
+                
+                # 检查异常（变化幅度超过20%）
+                for region in all_regions:
+                    refund_ratio = refund_region_dist.get(region, 0)
+                    overall_ratio = overall_region_dist.get(region, 0)
+                    
+                    # 计算变化幅度（相对变化率）
+                    if overall_ratio > 0 and refund_ratio > 0.01:  # 增加占比超过1%的条件
+                        change_rate = abs(refund_ratio - overall_ratio) / overall_ratio
+                        if change_rate > 0.2:  # 20%变化幅度阈值
+                            change_direction = "增长" if refund_ratio > overall_ratio else "下降"
+                            anomalies.append(f"[退订对比]{region_col}中{region}地区订单占比异常{change_direction}：CM2退订为{refund_ratio:.2%}，CM2整体为{overall_ratio:.2%}，变化幅度{change_rate:.1%}")
+                    elif refund_ratio > 0.01:  # 新出现的地区，占比超过1%
+                        anomalies.append(f"[退订对比]{region_col}中{region}地区为退订特有区域：CM2退订占比{refund_ratio:.2%}，整体无显著数据")
+    
+    # 4. CM2 当日退订异常分析（日环比增速）
+    if 'intention_refund_time' in cm2_data.columns:
+        # 筛选退订数据（基于intention_refund_time字段不为空）
+        cm2_refund_data = cm2_data[cm2_data['intention_refund_time'].notna()].copy()
+        
+        if len(cm2_refund_data) > 0:
+            # 获取当日日期（与订单数据保持一致，使用订单数据的最新日期）
+            cm2_order_data_copy = cm2_data.copy()
+            cm2_order_data_copy['date'] = cm2_order_data_copy['Intention_Payment_Time'].dt.date
+            latest_date = cm2_order_data_copy['date'].max()
+            
+            # 获取前一日日期
+            previous_date = latest_date - pd.Timedelta(days=1)
+            
+            # 筛选当日和前一日退订数据
+            cm2_daily_refund_data = cm2_refund_data[cm2_refund_data['intention_refund_time'].dt.date == latest_date]
+            cm2_previous_refund_data = cm2_refund_data[cm2_refund_data['intention_refund_time'].dt.date == previous_date]
+            
+            if len(cm2_daily_refund_data) > 0:
+                # 计算当日和前一日各地区退订数量
+                cm2_daily_refund_counts = cm2_daily_refund_data[region_col].value_counts()
+                cm2_previous_refund_counts = cm2_previous_refund_data[region_col].value_counts() if len(cm2_previous_refund_data) > 0 else pd.Series()
+                
+                # 获取所有地区
+                all_regions = set(cm2_daily_refund_counts.index) | set(cm2_previous_refund_counts.index)
+                
+                # 检查日环比增速异常（变化幅度超过10%）
+                for region in all_regions:
+                    daily_count = cm2_daily_refund_counts.get(region, 0)
+                    previous_count = cm2_previous_refund_counts.get(region, 0)
+                    
+                    # 计算日环比增速
+                    if previous_count > 0 and daily_count >= 1:  # 当日至少1单退订
+                        change_rate = (daily_count - previous_count) / previous_count
+                        if abs(change_rate) > 0.10:  # 10%变化幅度阈值
+                            change_direction = "增长" if change_rate > 0 else "下降"
+                            anomalies.append(f"[当日退订异常]{region_col}中{region}地区当日退订日环比异常{change_direction}：当日{daily_count}单，前日{previous_count}单，增速{change_rate:.1%}")
+                    elif daily_count >= 2 and previous_count == 0:  # 新出现的地区，当日至少2单
+                        anomalies.append(f"[当日退订异常]{region_col}中{region}地区当日新增退订：当日{daily_count}单，前日0单")
+    
     return anomalies
 
 # 渠道结构异常分析
@@ -614,6 +687,73 @@ def analyze_channel_structure(vehicle_data):
                     anomalies.append(f"[CM1对比]渠道{channel}销量占比异常{change_direction}：CM2为{cm2_ratio:.2%}，CM1为{cm1_ratio:.2%}，变化幅度{change_rate:.1%}")
             elif cm2_ratio > 0.01:  # 新出现的渠道，占比超过1%
                 anomalies.append(f"[CM1对比]渠道{channel}为新出现渠道：CM2占比{cm2_ratio:.2%}，CM1无数据")
+    
+    # 3. CM2退订 vs CM2整体差异分析
+    if 'intention_refund_time' in cm2_data.columns:
+        # 筛选退订数据（基于intention_refund_time字段不为空）
+        cm2_refund_data = cm2_data[cm2_data['intention_refund_time'].notna()]
+        
+        if len(cm2_refund_data) > 0:
+            # 计算退订和整体的渠道分布
+            cm2_refund_channel_dist = cm2_refund_data[channel_col].value_counts(normalize=True)
+            cm2_overall_channel_dist = cm2_data[channel_col].value_counts(normalize=True)
+            
+            # 获取所有渠道
+            all_channels = set(cm2_refund_channel_dist.index) | set(cm2_overall_channel_dist.index)
+            
+            # 检查异常（变化幅度超过20%）
+            for channel in all_channels:
+                refund_ratio = cm2_refund_channel_dist.get(channel, 0)
+                overall_ratio = cm2_overall_channel_dist.get(channel, 0)
+                
+                # 计算变化幅度（相对变化率）
+                if overall_ratio > 0 and refund_ratio > 0.01:  # 增加占比超过1%的条件
+                    change_rate = abs(refund_ratio - overall_ratio) / overall_ratio
+                    if change_rate > 0.20:  # 20%变化幅度阈值
+                        change_direction = "增长" if refund_ratio > overall_ratio else "下降"
+                        anomalies.append(f"[退订对比]渠道{channel}退订占比异常{change_direction}：退订为{refund_ratio:.2%}，整体为{overall_ratio:.2%}，变化幅度{change_rate:.1%}")
+                elif refund_ratio > 0.01:  # 新出现的渠道，占比超过1%
+                    anomalies.append(f"[退订对比]渠道{channel}在退订中为新出现渠道：退订占比{refund_ratio:.2%}，整体占比{overall_ratio:.2%}")
+    
+    # 4. CM2 当日退订异常分析（日环比增速）
+    if 'intention_refund_time' in cm2_data.columns:
+        # 筛选退订数据（基于intention_refund_time字段不为空）
+        cm2_refund_data = cm2_data[cm2_data['intention_refund_time'].notna()].copy()
+        
+        if len(cm2_refund_data) > 0:
+            # 获取当日日期（与订单数据保持一致，使用订单数据的最新日期）
+            cm2_order_data_copy = cm2_data.copy()
+            cm2_order_data_copy['date'] = cm2_order_data_copy['Intention_Payment_Time'].dt.date
+            latest_date = cm2_order_data_copy['date'].max()
+            
+            # 获取前一日日期
+            previous_date = latest_date - pd.Timedelta(days=1)
+            
+            # 筛选当日和前一日退订数据
+            cm2_daily_refund_data = cm2_refund_data[cm2_refund_data['intention_refund_time'].dt.date == latest_date]
+            cm2_previous_refund_data = cm2_refund_data[cm2_refund_data['intention_refund_time'].dt.date == previous_date]
+            
+            if len(cm2_daily_refund_data) > 0:
+                # 计算当日和前一日各渠道退订数量
+                cm2_daily_refund_counts = cm2_daily_refund_data[channel_col].value_counts()
+                cm2_previous_refund_counts = cm2_previous_refund_data[channel_col].value_counts() if len(cm2_previous_refund_data) > 0 else pd.Series()
+                
+                # 获取所有渠道
+                all_channels = set(cm2_daily_refund_counts.index) | set(cm2_previous_refund_counts.index)
+                
+                # 检查日环比增速异常（变化幅度超过10%）
+                for channel in all_channels:
+                    daily_count = cm2_daily_refund_counts.get(channel, 0)
+                    previous_count = cm2_previous_refund_counts.get(channel, 0)
+                    
+                    # 计算日环比增速
+                    if previous_count > 0 and daily_count >= 1:  # 当日至少1单退订
+                        change_rate = (daily_count - previous_count) / previous_count
+                        if abs(change_rate) > 0.10:  # 10%变化幅度阈值
+                            change_direction = "增长" if change_rate > 0 else "下降"
+                            anomalies.append(f"[当日退订异常]渠道{channel}当日退订日环比异常{change_direction}：当日{daily_count}单，前日{previous_count}单，增速{change_rate:.1%}")
+                    elif daily_count >= 2 and previous_count == 0:  # 新出现的渠道，当日至少2单
+                        anomalies.append(f"[当日退订异常]渠道{channel}当日新增退订：当日{daily_count}单，前日0单")
     
     return anomalies
 
@@ -778,6 +918,154 @@ def analyze_demographic_structure(vehicle_data):
                     if change_rate > 0.1:  # 10%变化幅度阈值
                         change_direction = "增长" if cm2_ratio > cm1_ratio else "下降"
                         anomalies.append(f"[CM1对比]年龄段{age_group_name}比例异常{change_direction}：CM2为{cm2_ratio:.2%}，CM1为{cm1_ratio:.2%}，变化幅度{change_rate:.1%}")
+    
+    # 3. CM2退订 vs CM2整体差异分析
+    if 'intention_refund_time' in cm2_data.columns:
+        # 筛选退订数据（基于intention_refund_time字段不为空）
+        cm2_refund_data = cm2_data[cm2_data['intention_refund_time'].notna()]
+        
+        if len(cm2_refund_data) > 0:
+            # 3.1 性别比例分析
+            if 'order_gender' in cm2_data.columns:
+                cm2_refund_gender_dist = cm2_refund_data['order_gender'].value_counts(normalize=True)
+                cm2_overall_gender_dist = cm2_data['order_gender'].value_counts(normalize=True)
+                
+                # 获取所有性别
+                all_genders = set(cm2_refund_gender_dist.index) | set(cm2_overall_gender_dist.index)
+                
+                # 检查性别比例异常（变化幅度超过15%）
+                for gender in all_genders:
+                    refund_ratio = cm2_refund_gender_dist.get(gender, 0)
+                    overall_ratio = cm2_overall_gender_dist.get(gender, 0)
+                    
+                    # 计算变化幅度（相对变化率）
+                    if overall_ratio > 0:
+                        change_rate = abs(refund_ratio - overall_ratio) / overall_ratio
+                        if change_rate > 0.15:  # 15%变化幅度阈值
+                            change_direction = "增长" if refund_ratio > overall_ratio else "下降"
+                            anomalies.append(f"[退订对比]性别{gender}退订比例异常{change_direction}：退订为{refund_ratio:.2%}，整体为{overall_ratio:.2%}，变化幅度{change_rate:.1%}")
+            
+            # 3.2 年龄段结构分析
+            if 'buyer_age' in cm2_data.columns:
+                # 定义年龄段
+                def age_group(age):
+                    if pd.isna(age):
+                        return '未知'
+                    elif age < 25:
+                        return '25岁以下'
+                    elif age < 35:
+                        return '25-34岁'
+                    elif age < 45:
+                        return '35-44岁'
+                    elif age < 55:
+                        return '45-54岁'
+                    else:
+                        return '55岁以上'
+                
+                cm2_refund_data_copy = cm2_refund_data.copy()
+                cm2_refund_data_copy['age_group'] = cm2_refund_data_copy['buyer_age'].apply(age_group)
+                cm2_refund_age_dist = cm2_refund_data_copy['age_group'].value_counts(normalize=True)
+                
+                cm2_overall_data_copy = cm2_data.copy()
+                cm2_overall_data_copy['age_group'] = cm2_overall_data_copy['buyer_age'].apply(age_group)
+                cm2_overall_age_dist = cm2_overall_data_copy['age_group'].value_counts(normalize=True)
+                
+                # 获取所有年龄段
+                all_age_groups = set(cm2_refund_age_dist.index) | set(cm2_overall_age_dist.index)
+                
+                # 检查年龄段异常（变化幅度超过15%）
+                for age_group_name in all_age_groups:
+                    refund_ratio = cm2_refund_age_dist.get(age_group_name, 0)
+                    overall_ratio = cm2_overall_age_dist.get(age_group_name, 0)
+                    
+                    # 计算变化幅度（相对变化率）
+                    if overall_ratio > 0:
+                        change_rate = abs(refund_ratio - overall_ratio) / overall_ratio
+                        if change_rate > 0.15:  # 15%变化幅度阈值
+                            change_direction = "增长" if refund_ratio > overall_ratio else "下降"
+                            anomalies.append(f"[退订对比]年龄段{age_group_name}退订比例异常{change_direction}：退订为{refund_ratio:.2%}，整体为{overall_ratio:.2%}，变化幅度{change_rate:.1%}")
+    
+    # 4. CM2 当日退订异常分析（日环比增速）
+    if 'intention_refund_time' in cm2_data.columns:
+        # 筛选退订数据（基于intention_refund_time字段不为空）
+        cm2_refund_data = cm2_data[cm2_data['intention_refund_time'].notna()].copy()
+        
+        if len(cm2_refund_data) > 0:
+            # 获取当日日期（与订单数据保持一致，使用订单数据的最新日期）
+            cm2_order_data_copy = cm2_data.copy()
+            cm2_order_data_copy['date'] = cm2_order_data_copy['Intention_Payment_Time'].dt.date
+            latest_date = cm2_order_data_copy['date'].max()
+            
+            # 获取前一日日期
+            previous_date = latest_date - pd.Timedelta(days=1)
+            
+            # 筛选当日和前一日退订数据
+            cm2_daily_refund_data = cm2_refund_data[cm2_refund_data['intention_refund_time'].dt.date == latest_date]
+            cm2_previous_refund_data = cm2_refund_data[cm2_refund_data['intention_refund_time'].dt.date == previous_date]
+            
+            if len(cm2_daily_refund_data) > 0:
+                # 性别分布日环比对比
+                if 'gender' in cm2_data.columns:
+                    cm2_daily_refund_gender_counts = cm2_daily_refund_data['gender'].value_counts()
+                    cm2_previous_refund_gender_counts = cm2_previous_refund_data['gender'].value_counts() if len(cm2_previous_refund_data) > 0 else pd.Series()
+                    
+                    # 获取所有性别
+                    all_genders = set(cm2_daily_refund_gender_counts.index) | set(cm2_previous_refund_gender_counts.index)
+                    
+                    # 检查日环比增速异常（变化幅度超过10%）
+                    for gender in all_genders:
+                        daily_count = cm2_daily_refund_gender_counts.get(gender, 0)
+                        previous_count = cm2_previous_refund_gender_counts.get(gender, 0)
+                        
+                        # 计算日环比增速
+                        if previous_count > 0 and daily_count >= 1:  # 当日至少1单退订
+                            change_rate = (daily_count - previous_count) / previous_count
+                            if abs(change_rate) > 0.10:  # 10%变化幅度阈值
+                                change_direction = "增长" if change_rate > 0 else "下降"
+                                anomalies.append(f"[当日退订异常]性别{gender}当日退订日环比异常{change_direction}：当日{daily_count}单，前日{previous_count}单，增速{change_rate:.1%}")
+                        elif daily_count >= 2 and previous_count == 0:  # 新出现的性别，当日至少2单
+                            anomalies.append(f"[当日退订异常]性别{gender}当日新增退订：当日{daily_count}单，前日0单")
+                
+                # 年龄段分布日环比对比
+                if 'age' in cm2_data.columns:
+                    # 定义年龄段分组函数
+                    def get_age_group(age):
+                        if pd.isna(age):
+                            return '未知'
+                        elif age < 25:
+                            return '25岁以下'
+                        elif age < 35:
+                            return '25-34岁'
+                        elif age < 45:
+                            return '35-44岁'
+                        elif age < 55:
+                            return '45-54岁'
+                        else:
+                            return '55岁以上'
+                    
+                    # 计算年龄段分布
+                    cm2_daily_refund_data['age_group'] = cm2_daily_refund_data['age'].apply(get_age_group)
+                    cm2_previous_refund_data['age_group'] = cm2_previous_refund_data['age'].apply(get_age_group) if len(cm2_previous_refund_data) > 0 else pd.Series()
+                    
+                    cm2_daily_refund_age_counts = cm2_daily_refund_data['age_group'].value_counts()
+                    cm2_previous_refund_age_counts = cm2_previous_refund_data['age_group'].value_counts() if len(cm2_previous_refund_data) > 0 else pd.Series()
+                    
+                    # 获取所有年龄段
+                    all_age_groups = set(cm2_daily_refund_age_counts.index) | set(cm2_previous_refund_age_counts.index)
+                    
+                    # 检查日环比增速异常（变化幅度超过10%）
+                    for age_group in all_age_groups:
+                        daily_count = cm2_daily_refund_age_counts.get(age_group, 0)
+                        previous_count = cm2_previous_refund_age_counts.get(age_group, 0)
+                        
+                        # 计算日环比增速
+                        if previous_count > 0 and daily_count >= 1:  # 当日至少1单退订
+                            change_rate = (daily_count - previous_count) / previous_count
+                            if abs(change_rate) > 0.10:  # 10%变化幅度阈值
+                                change_direction = "增长" if change_rate > 0 else "下降"
+                                anomalies.append(f"[当日退订异常]年龄段{age_group}当日退订日环比异常{change_direction}：当日{daily_count}单，前日{previous_count}单，增速{change_rate:.1%}")
+                        elif daily_count >= 2 and previous_count == 0:  # 新出现的年龄段，当日至少2单
+                            anomalies.append(f"[当日退订异常]年龄段{age_group}当日新增退订：当日{daily_count}单，前日0单")
     
     return anomalies
 
@@ -1259,15 +1547,21 @@ def generate_structure_report(state, vehicle_data, anomalies):
     
     report_content += "\n## 结构异常检测结果\n\n"
     
-    # 分类异常 - 区分历史对比和CM1对比
+    # 分类异常 - 区分历史对比、CM1对比、退订对比和当日退订异常
     region_anomalies_hist = [a for a in anomalies if '[历史对比]' in a and any(region_type in a for region_type in ['Parent Region Name', 'License Province', 'license_city_level', 'License City'])]
     region_anomalies_cm1 = [a for a in anomalies if '[CM1对比]' in a and any(region_type in a for region_type in ['Parent Region Name', 'License Province', 'license_city_level', 'License City'])]
+    region_anomalies_refund = [a for a in anomalies if '[退订对比]' in a and any(region_type in a for region_type in ['Parent Region Name', 'License Province', 'license_city_level', 'License City'])]
+    region_anomalies_daily = [a for a in anomalies if '[当日退订异常]' in a and any(region_type in a for region_type in ['Parent Region Name', 'License Province', 'license_city_level', 'License City', '地区'])]
     
     channel_anomalies_hist = [a for a in anomalies if '[历史对比]' in a and '渠道' in a]
     channel_anomalies_cm1 = [a for a in anomalies if '[CM1对比]' in a and '渠道' in a]
+    channel_anomalies_refund = [a for a in anomalies if '[退订对比]' in a and '渠道' in a]
+    channel_anomalies_daily = [a for a in anomalies if '[当日退订异常]' in a and '渠道' in a]
     
     demographic_anomalies_hist = [a for a in anomalies if '[历史对比]' in a and any(demo_type in a for demo_type in ['性别', '年龄段'])]
     demographic_anomalies_cm1 = [a for a in anomalies if '[CM1对比]' in a and any(demo_type in a for demo_type in ['性别', '年龄段'])]
+    demographic_anomalies_refund = [a for a in anomalies if '[退订对比]' in a and any(demo_type in a for demo_type in ['性别', '年龄段'])]
+    demographic_anomalies_daily = [a for a in anomalies if '[当日退订异常]' in a and any(demo_type in a for demo_type in ['性别', '年龄段'])]
     
     # 同比/环比异常
     time_series_anomalies_daily = [a for a in anomalies if '[日环比]' in a]
@@ -1345,6 +1639,79 @@ def generate_structure_report(state, vehicle_data, anomalies):
     else:
         report_content += "**✅ 地区分布正常:** 相比CM1，所有地区订单占比变化均在20%阈值范围内。\n"
     
+    # CM2退订对比结果
+    report_content += "\n#### 🔄 CM2退订 vs CM2整体对比\n\n"
+    if region_anomalies_refund:
+        report_content += "**🚨 发现地区分布异常:**\n\n"
+        report_content += "| 序号 | 地区类型 | 地区名称 | CM2退订占比 | CM2整体占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|----------|-------------|-------------|----------|----------|\n"
+        
+        for i, anomaly in enumerate(region_anomalies_refund, 1):
+            clean_anomaly = anomaly.replace('[退订对比]', '')
+            
+            # 解析异常信息
+            region_type_match = re.search(r'(Parent Region Name|License Province|license_city_level|License City)中(.+?)地区', clean_anomaly)
+            refund_match = re.search(r'CM2退订为([\d.]+%)', clean_anomaly)
+            overall_match = re.search(r'CM2整体为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            region_type = region_type_match.group(1) if region_type_match else ""
+            region_name = region_type_match.group(2) if region_type_match else ""
+            refund_ratio = refund_match.group(1) if refund_match else ""
+            overall_ratio = overall_match.group(1) if overall_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {region_type} | {region_name} | {refund_ratio} | {overall_ratio} | {change_rate} | {anomaly_type} |\n"
+    else:
+        report_content += "**✅ 地区分布正常:** CM2退订用户地区分布与整体分布变化均在20%阈值范围内。\n"
+    
+    # CM2当日退订异常分析
+    report_content += "\n#### 📅 CM2当日退订异常分析\n\n"
+    if region_anomalies_daily:
+        report_content += "**🚨 发现当日退订地区异常:**\n\n"
+        report_content += "| 序号 | 地区名称 | 当日退订数量 | 前日退订数量 | 日环比增速 | 异常类型 |\n"
+        report_content += "|------|----------|-------------|-------------|----------|----------|\n"
+        
+        for i, anomaly in enumerate(region_anomalies_daily, 1):
+            clean_anomaly = anomaly.replace('[当日退订异常]', '')
+            
+            # 解析异常信息
+            region_match = re.search(r'中(.+?)地区当日退订日环比异常', clean_anomaly)
+            daily_match = re.search(r'当日(\d+)单', clean_anomaly)
+            previous_match = re.search(r'前日(\d+)单', clean_anomaly)
+            change_match = re.search(r'增速([+-]?[\d.]+%)', clean_anomaly)
+            
+            # 处理新增地区的情况
+            if not region_match:
+                region_match = re.search(r'中(.+?)地区当日新增退订', clean_anomaly)
+            
+            region_name = region_match.group(1) if region_match else ""
+            daily_count = daily_match.group(1) if daily_match else ""
+            previous_count = previous_match.group(1) if previous_match else "0"
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            elif "新增退订" in clean_anomaly:
+                anomaly_type = "🆕 新增"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {region_name} | {daily_count} | {previous_count} | {change_rate} | {anomaly_type} |\n"
+    else:
+        report_content += "**✅ 当日退订地区正常:** 当日退订地区日环比增速均在10%阈值范围内。\n"
+    
     # 渠道结构异常
     report_content += "\n### 🛒 渠道结构异常检测\n\n"
     
@@ -1413,6 +1780,78 @@ def generate_structure_report(state, vehicle_data, anomalies):
             report_content += f"| {i} | {channel_name} | {cm2_ratio} | {cm1_ratio} | {change_rate} | {anomaly_type} |\n"
     else:
         report_content += "**✅ 渠道结构正常:** 相比CM1，所有渠道销量占比变化均在15%阈值范围内。\n"
+    
+    # CM2退订对比结果
+    report_content += "\n#### 🔄 CM2退订 vs CM2整体对比\n\n"
+    if channel_anomalies_refund:
+        report_content += "**🚨 发现渠道结构异常:**\n\n"
+        report_content += "| 序号 | 渠道名称 | CM2退订占比 | CM2整体占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|-------------|-------------|----------|----------|\n"
+        
+        for i, anomaly in enumerate(channel_anomalies_refund, 1):
+            clean_anomaly = anomaly.replace('[退订对比]', '')
+            
+            # 解析异常信息
+            channel_match = re.search(r'渠道(.+?)退订占比异常', clean_anomaly)
+            refund_match = re.search(r'退订为([\d.]+%)', clean_anomaly)
+            overall_match = re.search(r'整体为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            channel_name = channel_match.group(1) if channel_match else ""
+            refund_ratio = refund_match.group(1) if refund_match else ""
+            overall_ratio = overall_match.group(1) if overall_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {channel_name} | {refund_ratio} | {overall_ratio} | {change_rate} | {anomaly_type} |\n"
+    else:
+        report_content += "**✅ 渠道结构正常:** CM2退订用户渠道分布与整体分布变化均在15%阈值范围内。\n"
+    
+    # CM2当日退订异常分析
+    report_content += "\n#### 📅 CM2当日退订异常分析\n\n"
+    if channel_anomalies_daily:
+        report_content += "**🚨 发现当日退订渠道异常:**\n\n"
+        report_content += "| 序号 | 渠道名称 | 当日退订数量 | 前日退订数量 | 日环比增速 | 异常类型 |\n"
+        report_content += "|------|----------|-------------|-------------|----------|----------|\n"
+        
+        for i, anomaly in enumerate(channel_anomalies_daily, 1):
+            clean_anomaly = anomaly.replace('[当日退订异常]', '')
+            
+            # 解析异常信息
+            channel_match = re.search(r'渠道(.+?)当日退订日环比异常', clean_anomaly)
+            daily_match = re.search(r'当日(\d+)单', clean_anomaly)
+            previous_match = re.search(r'前日(\d+)单', clean_anomaly)
+            change_match = re.search(r'增速([+-]?[\d.]+%)', clean_anomaly)
+            
+            # 处理新增渠道的情况
+            if not channel_match:
+                channel_match = re.search(r'渠道(.+?)当日新增退订', clean_anomaly)
+            
+            channel_name = channel_match.group(1) if channel_match else ""
+            daily_count = daily_match.group(1) if daily_match else ""
+            previous_count = previous_match.group(1) if previous_match else "0"
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            elif "新增退订" in clean_anomaly:
+                anomaly_type = "🆕 新增"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {channel_name} | {daily_count} | {previous_count} | {change_rate} | {anomaly_type} |\n"
+    else:
+        report_content += "**✅ 当日退订渠道正常:** 当日退订渠道日环比增速均在10%阈值范围内。\n"
     
     # 人群结构异常
     report_content += "\n### 👥 人群结构异常检测\n\n"
@@ -1484,6 +1923,80 @@ def generate_structure_report(state, vehicle_data, anomalies):
             report_content += f"| {i} | {demo_type} | {demo_name} | {cm2_ratio} | {cm1_ratio} | {change_rate} | {anomaly_type} |\n"
     else:
         report_content += "**✅ 人群结构正常:** 相比CM1，所有性别比例和年龄段结构变化均在10%阈值范围内。\n"
+    
+    # CM2退订对比结果
+    report_content += "\n#### 🔄 CM2退订 vs CM2整体对比\n\n"
+    if demographic_anomalies_refund:
+        report_content += "**🚨 发现人群结构异常:**\n\n"
+        report_content += "| 序号 | 人群类型 | 人群名称 | CM2退订占比 | CM2整体占比 | 变化幅度 | 异常类型 |\n"
+        report_content += "|------|----------|----------|-------------|-------------|----------|----------|\n"
+        
+        for i, anomaly in enumerate(demographic_anomalies_refund, 1):
+            clean_anomaly = anomaly.replace('[退订对比]', '')
+            
+            # 解析异常信息
+            demo_match = re.search(r'(性别|年龄段)(.+?)退订比例异常', clean_anomaly)
+            refund_match = re.search(r'退订为([\d.]+%)', clean_anomaly)
+            overall_match = re.search(r'整体为([\d.]+%)', clean_anomaly)
+            change_match = re.search(r'变化幅度([\d.]+%)', clean_anomaly)
+            
+            demo_type = demo_match.group(1) if demo_match else ""
+            demo_name = demo_match.group(2) if demo_match else ""
+            refund_ratio = refund_match.group(1) if refund_match else ""
+            overall_ratio = overall_match.group(1) if overall_match else ""
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {demo_type} | {demo_name} | {refund_ratio} | {overall_ratio} | {change_rate} | {anomaly_type} |\n"
+    else:
+        report_content += "**✅ 人群结构正常:** CM2退订用户人群结构与整体结构变化均在10%阈值范围内。\n"
+    
+    # CM2当日退订异常分析
+    report_content += "\n#### 📅 CM2当日退订异常分析\n\n"
+    if demographic_anomalies_daily:
+        report_content += "**🚨 发现当日退订人群异常:**\n\n"
+        report_content += "| 序号 | 人群类型 | 人群名称 | 当日退订数量 | 前日退订数量 | 日环比增速 | 异常类型 |\n"
+        report_content += "|------|----------|----------|-------------|-------------|----------|----------|\n"
+        
+        for i, anomaly in enumerate(demographic_anomalies_daily, 1):
+            clean_anomaly = anomaly.replace('[当日退订异常]', '')
+            
+            # 解析异常信息
+            demo_match = re.search(r'(性别|年龄段)(.+?)当日退订日环比异常', clean_anomaly)
+            daily_match = re.search(r'当日(\d+)单', clean_anomaly)
+            previous_match = re.search(r'前日(\d+)单', clean_anomaly)
+            change_match = re.search(r'增速([+-]?[\d.]+%)', clean_anomaly)
+            
+            # 处理新增人群的情况
+            if not demo_match:
+                demo_match = re.search(r'(性别|年龄段)(.+?)当日新增退订', clean_anomaly)
+            
+            demo_type = demo_match.group(1) if demo_match else ""
+            demo_name = demo_match.group(2) if demo_match else ""
+            daily_count = daily_match.group(1) if daily_match else ""
+            previous_count = previous_match.group(1) if previous_match else "0"
+            change_rate = change_match.group(1) if change_match else ""
+            
+            # 判断异常类型并添加emoji
+            if "异常增长" in clean_anomaly:
+                anomaly_type = "📈 增长"
+            elif "异常下降" in clean_anomaly:
+                anomaly_type = "📉 下降"
+            elif "新增退订" in clean_anomaly:
+                anomaly_type = "🆕 新增"
+            else:
+                anomaly_type = "异常"
+            
+            report_content += f"| {i} | {demo_type} | {demo_name} | {daily_count} | {previous_count} | {change_rate} | {anomaly_type} |\n"
+    else:
+        report_content += "**✅ 当日退订人群正常:** 当日退订人群日环比增速均在10%阈值范围内。\n"
     
     # 同比/环比异常
     report_content += "\n### 📈 同比/环比异常检测\n\n"
@@ -1583,31 +2096,97 @@ def generate_structure_report(state, vehicle_data, anomalies):
             
             report_content += f"- **{vehicle}车型** (第{daily_data['day_n']}日, {daily_data['vehicle_date']}): 订单{daily_data['orders']}单, 退订{refund_count}单\n"
     
-    # CM2累计数据
-    if time_series_desc['cm2_cumulative'] and refund_desc['cm2_cumulative']:
-        cumulative_data = time_series_desc['cm2_cumulative'][-1]
-        refund_cumulative = refund_desc['cm2_cumulative'][-1]
-        refund_rate = (refund_cumulative['cumulative_refunds'] / cumulative_data['cumulative_orders']) * 100
-        
-        report_content += f"\n**CM2车型第{cumulative_data['day_n']}日累计数据:**\n\n"
-        report_content += f"- 累计订单数: {cumulative_data['cumulative_orders']}单\n"
-        report_content += f"- 累计退订数: {refund_cumulative['cumulative_refunds']}单\n"
-        report_content += f"- 退订率: {refund_rate:.2f}%\n"
+    # CM2累计数据 - 使用与退订率日环比检测相同的数据源确保一致性
+    time_series_data = state.get('time_series_data', {})
+    if time_series_data and 'cm2_daily_data' in time_series_data:
+        cm2_daily_data = time_series_data['cm2_daily_data']
+        if len(cm2_daily_data) > 0:
+            # 获取最后一天的数据
+            last_day_data = cm2_daily_data.iloc[-1]
+            cumulative_orders = int(last_day_data['cumulative_orders'])
+            cumulative_refunds = int(last_day_data['cumulative_refunds'])
+            
+            # 计算从预售开始的天数
+            presale_periods = state.get('presale_periods', {})
+            if presale_periods and 'CM2' in presale_periods:
+                cm2_start = pd.to_datetime(presale_periods['CM2']['start'])
+                last_date = pd.to_datetime(last_day_data['date'])
+                day_n = (last_date - cm2_start).days + 1
+                
+                refund_rate = 0
+                if cumulative_orders > 0:
+                    refund_rate = (cumulative_refunds / cumulative_orders) * 100
+                
+                report_content += f"\n**CM2车型第{day_n}日累计数据:**\n\n"
+                report_content += f"- 累计订单数: {cumulative_orders}单\n"
+                report_content += f"- 累计退订数: {cumulative_refunds}单\n"
+                report_content += f"- 退订率: {refund_rate:.2f}%\n"
     
     # 同期其他车型累计数据对比
     report_content += "\n**同期其他车型第N日累计数据对比:**\n\n"
+    
+    # 获取CM2的当前天数 - 使用统一的数据源
+    cm2_current_day = None
+    time_series_data = state.get('time_series_data', {})
+    if time_series_data and 'cm2_daily_data' in time_series_data:
+        cm2_daily_data = time_series_data['cm2_daily_data']
+        if len(cm2_daily_data) > 0:
+            presale_periods = state.get('presale_periods', {})
+            if presale_periods and 'CM2' in presale_periods:
+                cm2_start = pd.to_datetime(presale_periods['CM2']['start'])
+                last_date = pd.to_datetime(cm2_daily_data.iloc[-1]['date'])
+                cm2_current_day = (last_date - cm2_start).days + 1
+    
+    # 使用与退订率表格相同的数据源来确保一致性
     for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
-        if (vehicle in time_series_desc['comparison_cumulative'] and 
-            time_series_desc['comparison_cumulative'][vehicle] and
-            vehicle in refund_desc['comparison_cumulative'] and 
-            refund_desc['comparison_cumulative'][vehicle]):
+        if vehicle not in vehicle_data or len(vehicle_data[vehicle]) == 0:
+            continue
             
-            cumulative_data = time_series_desc['comparison_cumulative'][vehicle][-1]
-            refund_cumulative = refund_desc['comparison_cumulative'][vehicle][-1]
+        presale_periods = state.get('presale_periods', {})
+        if vehicle not in presale_periods or cm2_current_day is None:
+            continue
             
-            if cumulative_data['cumulative_orders'] > 0:
-                refund_rate = (refund_cumulative['cumulative_refunds'] / cumulative_data['cumulative_orders']) * 100
-                report_content += f"- **{vehicle}车型** (第{cumulative_data['day_n']}日): 累计订单{cumulative_data['cumulative_orders']}单, 累计退订{refund_cumulative['cumulative_refunds']}单, 退订率{refund_rate:.2f}%\n"
+        vehicle_start = pd.to_datetime(presale_periods[vehicle]['start'])
+        
+        # 准备车型订单数据
+        vehicle_data_copy = vehicle_data[vehicle].copy()
+        vehicle_data_copy['date'] = vehicle_data_copy['Intention_Payment_Time'].dt.date
+        vehicle_daily = vehicle_data_copy.groupby('date').size().reset_index(name='orders')
+        vehicle_daily['date'] = pd.to_datetime(vehicle_daily['date'])
+        vehicle_daily = vehicle_daily.sort_values('date')
+        vehicle_daily['cumulative_orders'] = vehicle_daily['orders'].cumsum()
+        
+        # 准备车型退订数据
+        vehicle_refund_data = vehicle_data[vehicle][vehicle_data[vehicle]['intention_refund_time'].notna()].copy()
+        if len(vehicle_refund_data) > 0:
+            vehicle_refund_data['refund_date'] = vehicle_refund_data['intention_refund_time'].dt.date
+            vehicle_daily_refund = vehicle_refund_data.groupby('refund_date').size().reset_index(name='refunds')
+            vehicle_daily_refund['refund_date'] = pd.to_datetime(vehicle_daily_refund['refund_date'])
+            vehicle_daily_refund = vehicle_daily_refund.sort_values('refund_date')
+            vehicle_daily_refund['cumulative_refunds'] = vehicle_daily_refund['refunds'].cumsum()
+            
+            # 合并订单和退订数据
+            vehicle_daily = vehicle_daily.merge(vehicle_daily_refund[['refund_date', 'cumulative_refunds']], 
+                                              left_on='date', right_on='refund_date', how='left')
+            vehicle_daily['cumulative_refunds'] = vehicle_daily['cumulative_refunds'].ffill().fillna(0)
+        else:
+            vehicle_daily['cumulative_refunds'] = 0
+        
+        # 计算从预售开始的天数
+        vehicle_daily['days_from_start'] = (vehicle_daily['date'] - vehicle_start).dt.days
+        
+        # 找到对应CM2当前天数的数据
+        target_day = cm2_current_day - 1  # CM2的第N日对应其他车型的第N-1日
+        vehicle_target_data = vehicle_daily[vehicle_daily['days_from_start'] == target_day]
+        
+        if not vehicle_target_data.empty:
+            target_row = vehicle_target_data.iloc[-1]  # 取最后一行数据
+            cumulative_orders = int(target_row['cumulative_orders'])
+            cumulative_refunds = int(target_row['cumulative_refunds'])
+            
+            if cumulative_orders > 0:
+                refund_rate = (cumulative_refunds / cumulative_orders) * 100
+                report_content += f"- **{vehicle}车型** (第{target_day + 1}日): 累计订单{cumulative_orders}单, 累计退订{cumulative_refunds}单, 退订率{refund_rate:.2f}%\n"
     
     # 前一天数据描述
     report_content += "\n#### 📅 前一天数据分析\n\n"
@@ -1916,6 +2495,117 @@ def generate_structure_report(state, vehicle_data, anomalies):
             report_content += "**⚠️ 无法生成归一化对比表:** 缺少归一化数据\n"
     else:
         report_content += "**⚠️ 无法生成退订率对比表:** 缺少车型数据\n"
+    
+    # 添加每日订单累计退订情况表格
+    report_content += "\n#### 📊 每日订单累计退订情况\n\n"
+    report_content += f"以下表格展示各车型从预售开始每日的订单数和当日订单中的退订数（统一按CM2第{cm2_current_day if cm2_current_day is not None else 'N'}日观察时间点计算），以便横向对比各车型同周期每日订单的退订率表现。\n\n"
+    
+    # 构建每日订单累计退订情况表格数据
+    order_refund_table_data = {}
+    max_order_days = 0
+    
+    # 获取CM2当前的观察时间点（天数）
+    cm2_current_day = None
+    if 'CM2' in vehicle_data and len(vehicle_data['CM2']) > 0:
+        presale_periods = state.get('presale_periods', {})
+        if 'CM2' in presale_periods:
+            cm2_start = pd.to_datetime(presale_periods['CM2']['start'])
+            cm2_data_copy = vehicle_data['CM2'].copy()
+            cm2_data_copy['date'] = cm2_data_copy['Intention_Payment_Time'].dt.date
+            cm2_latest_date = cm2_data_copy['date'].max()
+            cm2_current_day = (pd.to_datetime(cm2_latest_date) - cm2_start).days
+    
+    # 处理所有车型的订单和退订数据
+    for vehicle in ['CM2', 'CM0', 'CM1', 'DM0', 'DM1']:
+        if vehicle not in vehicle_data or len(vehicle_data[vehicle]) == 0:
+            continue
+            
+        presale_periods = state.get('presale_periods', {})
+        if vehicle not in presale_periods:
+            continue
+            
+        vehicle_start = pd.to_datetime(presale_periods[vehicle]['start'])
+        
+        # 准备车型订单数据
+        vehicle_data_copy = vehicle_data[vehicle].copy()
+        vehicle_data_copy['date'] = vehicle_data_copy['Intention_Payment_Time'].dt.date
+        vehicle_daily = vehicle_data_copy.groupby('date').size().reset_index(name='orders')
+        vehicle_daily['date'] = pd.to_datetime(vehicle_daily['date'])
+        vehicle_daily = vehicle_daily.sort_values('date')
+        
+        # 准备车型退订数据
+        vehicle_refund_data = vehicle_data[vehicle][vehicle_data[vehicle]['intention_refund_time'].notna()].copy()
+        
+        # 计算从预售开始的天数
+        vehicle_daily['days_from_start'] = (vehicle_daily['date'] - vehicle_start).dt.days
+        
+        # 存储每日订单数据
+        order_refund_table_data[vehicle] = {}
+        
+        # 确定观察截止时间点
+        observation_day = cm2_current_day if cm2_current_day is not None else vehicle_daily['days_from_start'].max()
+        observation_cutoff_date = vehicle_start + pd.Timedelta(days=observation_day)
+        
+        for _, row in vehicle_daily.iterrows():
+            day_num = row['days_from_start']
+            if day_num >= 0:  # 只包含预售开始后的数据
+                # 计算当日订单中有多少在观察截止时间点前退订了
+                daily_order_refunds = 0
+                if len(vehicle_refund_data) > 0:
+                    # 获取当日下单的用户ID
+                    current_date = row['date'].date()
+                    daily_orders = vehicle_data_copy[vehicle_data_copy['date'] == current_date]
+                    
+                    if len(daily_orders) > 0:
+                        # 计算这些当日订单中有多少在观察截止时间点前退订了
+                        daily_order_ids = set(daily_orders.index)
+                        # 只考虑在观察截止时间点前的退订
+                        refunded_before_cutoff = vehicle_refund_data[
+                            vehicle_refund_data['intention_refund_time'] <= observation_cutoff_date
+                        ]
+                        refunded_order_ids = set(refunded_before_cutoff.index)
+                        daily_order_refunds = len(daily_order_ids.intersection(refunded_order_ids))
+                
+                # 计算退订率
+                refund_rate = (daily_order_refunds / row['orders'] * 100) if row['orders'] > 0 else 0
+                
+                order_refund_table_data[vehicle][day_num] = {
+                    'daily_orders': row['orders'],
+                    'daily_order_refunds': daily_order_refunds,
+                    'refund_rate': refund_rate,
+                    'refund_situation': f"{row['orders']}订单/{daily_order_refunds}退订({refund_rate:.1f}%)"
+                }
+                max_order_days = max(max_order_days, day_num)
+    
+    # 生成每日订单累计退订情况表格
+    if order_refund_table_data and max_order_days > 0:
+        # 表头
+        order_header = "| 日期 |"
+        order_separator = "|------|"
+        vehicles_with_order_data = []
+        for vehicle in ['CM2', 'CM0', 'CM1', 'DM0', 'DM1']:
+            if vehicle in order_refund_table_data:
+                vehicles_with_order_data.append(vehicle)
+                order_header += f" **{vehicle}** |"
+                order_separator += "-------|"
+        
+        report_content += order_header + "\n"
+        report_content += order_separator + "\n"
+        
+        # 表格内容（按日期行展示）
+        for day in range(max_order_days + 1):  # 完整展示所有天数
+            row = f"| 第{day}日 |"
+            for vehicle in vehicles_with_order_data:
+                if day in order_refund_table_data[vehicle]:
+                    situation = order_refund_table_data[vehicle][day]['refund_situation']
+                    row += f" {situation} |"
+                else:
+                    row += " - |"
+            report_content += row + "\n"
+        
+        report_content += f"\n*注：表格显示各车型从预售开始每日的订单数和当日订单中的退订数，格式为'X订单/Y退订(退订率%)'。所有车型的退订数统一按CM2第{cm2_current_day if cm2_current_day is not None else 'N'}日观察时间点计算，便于横向对比各车型同周期每日订单的退订率表现*\n\n"
+    else:
+        report_content += "**⚠️ 无法生成每日订单累计退订情况表:** 缺少车型数据\n\n"
     
     # 同周期对比异常
     report_content += "\n#### 🔄 同周期对比异常检测\n\n"
