@@ -2,7 +2,7 @@
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet
-- **生成时间**: 2025-09-08T08:58:36.069503
+- **生成时间**: 2025-09-08T15:26:38.295268
 - **文件大小**: 3.16 MB
 
 ## 数据基本信息
