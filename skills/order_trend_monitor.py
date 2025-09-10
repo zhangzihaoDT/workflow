@@ -780,7 +780,7 @@ class OrderTrendMonitor:
             daily_orders['daily_change_rate'] = daily_orders['daily_orders'].pct_change() * 100
             
             # 添加车型标识
-            daily_orders['vehicle_group'] = vehicle
+            daily_orders['车型分组'] = vehicle
             
             daily_stats.append(daily_orders)
         
@@ -803,8 +803,8 @@ class OrderTrendMonitor:
         
         colors = px.colors.qualitative.Set1
         
-        for i, vehicle in enumerate(data['vehicle_group'].unique()):
-            vehicle_data = data[data['vehicle_group'] == vehicle]
+        for i, vehicle in enumerate(data['车型分组'].unique()):
+            vehicle_data = data[data['车型分组'] == vehicle]
             
             fig.add_trace(go.Scatter(
                 x=vehicle_data['days_from_start'],
@@ -848,8 +848,8 @@ class OrderTrendMonitor:
         
         colors = px.colors.qualitative.Set1
         
-        for i, vehicle in enumerate(data['vehicle_group'].unique()):
-            vehicle_data = data[data['vehicle_group'] == vehicle]
+        for i, vehicle in enumerate(data['车型分组'].unique()):
+            vehicle_data = data[data['车型分组'] == vehicle]
             
             fig.add_trace(go.Bar(
                 x=vehicle_data['days_from_start'],
@@ -893,8 +893,8 @@ class OrderTrendMonitor:
         
         colors = px.colors.qualitative.Set1
         
-        for i, vehicle in enumerate(data['vehicle_group'].unique()):
-            vehicle_data = data[data['vehicle_group'] == vehicle]
+        for i, vehicle in enumerate(data['车型分组'].unique()):
+            vehicle_data = data[data['车型分组'] == vehicle]
             # 过滤掉第一天（无法计算环比）
             vehicle_data = vehicle_data[vehicle_data['days_from_start'] > 1]
             
@@ -939,8 +939,8 @@ class OrderTrendMonitor:
         # 准备表格数据
         table_data = []
         
-        for vehicle in data['vehicle_group'].unique():
-            vehicle_data = data[data['vehicle_group'] == vehicle].sort_values('days_from_start')
+        for vehicle in data['车型分组'].unique():
+            vehicle_data = data[data['车型分组'] == vehicle].sort_values('days_from_start')
             
             for _, row in vehicle_data.iterrows():
                 # 环比变化emoji标记
@@ -1015,7 +1015,7 @@ class OrderTrendMonitor:
             daily_refunds['cumulative_refunds'] = daily_refunds['daily_refunds'].cumsum()
             
             # 添加车型标识
-            daily_refunds['vehicle_group'] = vehicle
+            daily_refunds['车型分组'] = vehicle
             
             refund_stats.append(daily_refunds)
         
@@ -1039,8 +1039,8 @@ class OrderTrendMonitor:
         rate_stats = []
         
         for vehicle in selected_vehicles:
-            vehicle_orders = order_data[order_data['vehicle_group'] == vehicle].copy()
-            vehicle_refunds = refund_data[refund_data['vehicle_group'] == vehicle].copy() if not refund_data.empty else pd.DataFrame()
+            vehicle_orders = order_data[order_data['车型分组'] == vehicle].copy()
+            vehicle_refunds = refund_data[refund_data['车型分组'] == vehicle].copy() if not refund_data.empty else pd.DataFrame()
             
             if vehicle_orders.empty:
                 continue
@@ -1062,7 +1062,7 @@ class OrderTrendMonitor:
             
             # 计算退订率
             merged['refund_rate'] = (merged['cumulative_refunds'] / merged['cumulative_orders'] * 100).fillna(0)
-            merged['vehicle_group'] = vehicle
+            merged['车型分组'] = vehicle
             
             rate_stats.append(merged)
         
@@ -1161,7 +1161,7 @@ class OrderTrendMonitor:
                 refund_rate = (daily_refunds / row['daily_orders'] * 100) if row['daily_orders'] > 0 else 0
                 
                 daily_rate_stats.append({
-                    'vehicle_group': vehicle,
+                    '车型分组': vehicle,
                     'days_from_start': day_num,
                     'daily_orders': row['daily_orders'],
                     'daily_refunds': daily_refunds,
@@ -1186,8 +1186,8 @@ class OrderTrendMonitor:
         
         colors = px.colors.qualitative.Set1
         
-        for i, vehicle in enumerate(data['vehicle_group'].unique()):
-            vehicle_data = data[data['vehicle_group'] == vehicle]
+        for i, vehicle in enumerate(data['车型分组'].unique()):
+            vehicle_data = data[data['车型分组'] == vehicle]
             
             fig.add_trace(go.Scatter(
                 x=vehicle_data['days_from_start'],
@@ -1231,8 +1231,8 @@ class OrderTrendMonitor:
         
         colors = px.colors.qualitative.Set1
         
-        for i, vehicle in enumerate(data['vehicle_group'].unique()):
-            vehicle_data = data[data['vehicle_group'] == vehicle]
+        for i, vehicle in enumerate(data['车型分组'].unique()):
+            vehicle_data = data[data['车型分组'] == vehicle]
             
             fig.add_trace(go.Scatter(
                 x=vehicle_data['days_from_start'],
@@ -1276,8 +1276,8 @@ class OrderTrendMonitor:
         
         colors = px.colors.qualitative.Set1
         
-        for i, vehicle in enumerate(data['vehicle_group'].unique()):
-            vehicle_data = data[data['vehicle_group'] == vehicle]
+        for i, vehicle in enumerate(data['车型分组'].unique()):
+            vehicle_data = data[data['车型分组'] == vehicle]
             
             fig.add_trace(go.Scatter(
                 x=vehicle_data['days_from_start'],
@@ -1314,8 +1314,8 @@ class OrderTrendMonitor:
         # 准备表格数据
         table_data = []
         
-        for vehicle in data['vehicle_group'].unique():
-            vehicle_data = data[data['vehicle_group'] == vehicle].sort_values('days_from_start')
+        for vehicle in data['车型分组'].unique():
+            vehicle_data = data[data['车型分组'] == vehicle].sort_values('days_from_start')
             
             for _, row in vehicle_data.iterrows():
                 # 退订率emoji标记
@@ -1338,6 +1338,326 @@ class OrderTrendMonitor:
                 })
         
         return pd.DataFrame(table_data)
+    
+    def prepare_regional_summary_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
+        """准备分区域累计订单、退订数和退订率汇总数据 - 按观察日期计算"""
+        if not selected_vehicles:
+            return pd.DataFrame()
+        
+        if self.df is None:
+            return pd.DataFrame()
+        
+        # 获取观察时间点（参考prepare_daily_refund_rate_data的逻辑）
+        cm2_current_day = None
+        if 'CM2' in selected_vehicles and 'CM2' in self.business_def:
+            cm2_data = self.df[self.df['车型分组'] == 'CM2']
+            if not cm2_data.empty:
+                cm2_start = datetime.strptime(self.business_def['CM2']['start'], '%Y-%m-%d')
+                cm2_data_copy = cm2_data.copy()
+                cm2_data_copy['date'] = cm2_data_copy['Intention_Payment_Time'].dt.date
+                cm2_latest_date = cm2_data_copy['date'].max()
+                cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
+        
+        # 如果没有CM2数据，则动态计算观察时间点
+        if cm2_current_day is None:
+            vehicle_max_days = {}
+            for vehicle in selected_vehicles:
+                if vehicle not in self.business_def:
+                    continue
+                vehicle_data = self.df[self.df['车型分组'] == vehicle]
+                if not vehicle_data.empty:
+                    vehicle_start = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
+                    vehicle_end = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
+                    business_max_days = (vehicle_end - vehicle_start).days + 1
+                    max_date = vehicle_data['Intention_Payment_Time'].max()
+                    actual_max_day = (max_date - vehicle_start).days + 1
+                    vehicle_max_days[vehicle] = min(actual_max_day, business_max_days)
+            
+            if not vehicle_max_days:
+                return pd.DataFrame()
+            observation_day = min(vehicle_max_days.values())
+        else:
+            observation_day = cm2_current_day
+        
+        regional_stats = []
+        
+        for vehicle in selected_vehicles:
+            if vehicle not in self.business_def:
+                continue
+                
+            vehicle_start = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
+            observation_cutoff_date = vehicle_start + timedelta(days=observation_day)
+            
+            # 获取车型数据，限制在观察时间点内
+            vehicle_df = self.df[
+                (self.df['车型分组'] == vehicle) & 
+                (self.df['Intention_Payment_Time'] <= observation_cutoff_date)
+            ].copy()
+            
+            if vehicle_df.empty:
+                continue
+            
+            # 检查区域字段
+            region_columns = ['Parent Region Name', 'License Province', 'License City']
+            available_region_col = None
+            for col in region_columns:
+                if col in vehicle_df.columns:
+                    available_region_col = col
+                    break
+            
+            if available_region_col:
+                # 按区域统计订单数
+                region_orders = vehicle_df.groupby(available_region_col).size().reset_index(name='orders')
+                
+                # 按区域统计退订数（只统计在观察时间点内的退订）
+                if 'intention_refund_time' in vehicle_df.columns:
+                    refund_df = vehicle_df[
+                        (vehicle_df['intention_refund_time'].notna()) &
+                        (vehicle_df['intention_refund_time'] <= observation_cutoff_date)
+                    ]
+                    region_refunds = refund_df.groupby(available_region_col).size().reset_index(name='refunds')
+                else:
+                    region_refunds = pd.DataFrame(columns=[available_region_col, 'refunds'])
+                
+                # 合并订单和退订数据
+                region_summary = region_orders.merge(region_refunds, on=available_region_col, how='left')
+                region_summary['refunds'] = region_summary['refunds'].fillna(0)
+                region_summary['refund_rate'] = (region_summary['refunds'] / region_summary['orders'] * 100).round(2)
+                region_summary['车型分组'] = vehicle
+                region_summary['region_type'] = available_region_col
+                region_summary['region_name'] = region_summary[available_region_col]
+                
+                regional_stats.append(region_summary)
+        
+        if regional_stats:
+            return pd.concat(regional_stats, ignore_index=True)
+        return pd.DataFrame()
+    
+    def create_regional_summary_table(self, data: pd.DataFrame) -> pd.DataFrame:
+        """创建车型对比的分区域累计订单、退订数和退订率汇总表格"""
+        if data.empty:
+            return pd.DataFrame({'提示': ['暂无区域数据']})
+        
+        # 获取所有车型和区域
+        vehicles = sorted(data['车型分组'].unique())
+        regions = data[['region_type', 'region_name']].drop_duplicates().sort_values(['region_type', 'region_name'])
+        
+        # 创建对比表格数据
+        table_data = []
+        
+        for _, region_row in regions.iterrows():
+            region_type = region_row['region_type']
+            region_name = region_row['region_name']
+            
+            # 基础行数据
+            row_data = {
+                '区域类型': region_type,
+                '区域名称': region_name
+            }
+            
+            # 为每个车型添加订单数/退订数和退订率列
+            for vehicle in vehicles:
+                vehicle_data = data[
+                    (data['车型分组'] == vehicle) & 
+                    (data['region_type'] == region_type) & 
+                    (data['region_name'] == region_name)
+                ]
+                
+                if not vehicle_data.empty:
+                    row = vehicle_data.iloc[0]
+                    refund_rate = row['refund_rate']
+                    
+                    # 添加订单数/退订数列
+                    row_data[f'{vehicle} 小订数/退订数'] = f"{int(row['orders']):,}/{int(row['refunds']):,}"
+                    
+                    # 添加退订率列（带emoji）
+                    if refund_rate < 5:
+                        trend_emoji = "🟢"
+                    elif refund_rate < 10:
+                        trend_emoji = "🟡"
+                    else:
+                        trend_emoji = "🔴"
+                    
+                    row_data[f'{vehicle} 退订率'] = f"{refund_rate:.1f}% {trend_emoji}"
+                else:
+                    row_data[f'{vehicle} 小订数/退订数'] = "-"
+                    row_data[f'{vehicle} 退订率'] = "-"
+            
+            table_data.append(row_data)
+        
+        # 创建DataFrame并排序
+        table_df = pd.DataFrame(table_data)
+        
+        return table_df
+    
+    def prepare_city_summary_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
+        """准备分城市累计订单、退订数和退订率数据 - 按观察日期计算"""
+        if not selected_vehicles:
+            return pd.DataFrame()
+        
+        # 获取观察时间点（参考prepare_daily_refund_rate_data的逻辑）
+        cm2_current_day = None
+        if 'CM2' in selected_vehicles and 'CM2' in self.business_def:
+            cm2_data = self.df[self.df['车型分组'] == 'CM2']
+            if not cm2_data.empty:
+                cm2_start = datetime.strptime(self.business_def['CM2']['start'], '%Y-%m-%d')
+                cm2_data_copy = cm2_data.copy()
+                cm2_data_copy['date'] = cm2_data_copy['Intention_Payment_Time'].dt.date
+                cm2_latest_date = cm2_data_copy['date'].max()
+                cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
+        
+        # 如果没有CM2数据，则动态计算观察时间点
+        if cm2_current_day is None:
+            vehicle_max_days = {}
+            for vehicle in selected_vehicles:
+                if vehicle not in self.business_def:
+                    continue
+                vehicle_data = self.df[self.df['车型分组'] == vehicle]
+                if not vehicle_data.empty:
+                    vehicle_start = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
+                    vehicle_end = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
+                    business_max_days = (vehicle_end - vehicle_start).days + 1
+                    max_date = vehicle_data['Intention_Payment_Time'].max()
+                    actual_max_day = (max_date - vehicle_start).days + 1
+                    vehicle_max_days[vehicle] = min(actual_max_day, business_max_days)
+            
+            if not vehicle_max_days:
+                return pd.DataFrame()
+            observation_day = min(vehicle_max_days.values())
+        else:
+            observation_day = cm2_current_day
+        
+        city_stats = []
+        
+        for vehicle in selected_vehicles:
+            if vehicle not in self.business_def:
+                continue
+                
+            vehicle_start = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
+            observation_cutoff_date = vehicle_start + timedelta(days=observation_day)
+            
+            # 获取车型数据，限制在观察时间点内
+            vehicle_df = self.df[
+                (self.df['车型分组'] == vehicle) & 
+                (self.df['Intention_Payment_Time'] <= observation_cutoff_date)
+            ].copy()
+            
+            if vehicle_df.empty:
+                continue
+            
+            # 按城市统计订单数
+            city_orders = vehicle_df.groupby('License City').size().reset_index(name='orders')
+            
+            # 按城市统计退订数（只统计在观察时间点内的退订）
+            if 'intention_refund_time' in vehicle_df.columns:
+                refund_df = vehicle_df[
+                    (vehicle_df['intention_refund_time'].notna()) &
+                    (vehicle_df['intention_refund_time'] <= observation_cutoff_date)
+                ]
+                city_refunds = refund_df.groupby('License City').size().reset_index(name='refunds')
+            else:
+                city_refunds = pd.DataFrame(columns=['License City', 'refunds'])
+            
+            # 合并订单和退订数据
+            city_summary = city_orders.merge(city_refunds, on='License City', how='left')
+            city_summary['refunds'] = city_summary['refunds'].fillna(0)
+            city_summary['refund_rate'] = (city_summary['refunds'] / city_summary['orders'] * 100).round(2)
+            city_summary['车型分组'] = vehicle
+            city_summary.rename(columns={'License City': 'license_city'}, inplace=True)
+            
+            city_stats.append(city_summary)
+        
+        if city_stats:
+            return pd.concat(city_stats, ignore_index=True)
+        return pd.DataFrame()
+    
+    def create_city_summary_table(self, data: pd.DataFrame, order_threshold: List[float] = [100, 2000]) -> pd.DataFrame:
+        """创建车型对比的分城市累计订单、退订数和退订率汇总表格"""
+        if data.empty:
+            return pd.DataFrame({'提示': ['暂无城市数据']})
+        
+        # 获取所有车型和城市
+        vehicles = sorted(data['车型分组'].unique())
+        cities = sorted(data['license_city'].unique())
+        
+        # 创建对比表格数据
+        table_data = []
+        
+        # 解析范围参数
+        min_threshold, max_threshold = order_threshold[0], order_threshold[1]
+        
+        for city in cities:
+            # 计算该城市所有车型的总小订数，用于筛选
+            city_total_orders = data[data['license_city'] == city]['orders'].sum()
+            
+            # 如果总小订数不在范围内，跳过该城市
+            if city_total_orders < min_threshold or city_total_orders > max_threshold:
+                continue
+            
+            # 基础行数据
+            row_data = {
+                '城市': city
+            }
+            
+            # 先收集所有车型的数据
+            vehicle_stats = {}
+            for vehicle in vehicles:
+                vehicle_data = data[
+                    (data['车型分组'] == vehicle) & 
+                    (data['license_city'] == city)
+                ]
+                
+                if not vehicle_data.empty:
+                    row = vehicle_data.iloc[0]
+                    orders = int(row['orders'])
+                    refunds = int(row['refunds'])
+                    refund_rate = row['refund_rate']
+                    
+                    # 退订率emoji
+                    if refund_rate < 5:
+                        trend_emoji = "🟢"
+                    elif refund_rate < 10:
+                        trend_emoji = "🟡"
+                    else:
+                        trend_emoji = "🔴"
+                    
+                    vehicle_stats[vehicle] = {
+                        'orders': f"{orders:,}",
+                        'refunds': f"{refunds:,}",
+                        'refund_rate': f"{refund_rate:.1f}% {trend_emoji}"
+                    }
+                else:
+                    vehicle_stats[vehicle] = {
+                        'orders': "-",
+                        'refunds': "-",
+                        'refund_rate': "-"
+                    }
+            
+            # 按指标类型分组添加列：先小订数，再退订数，最后退订率
+            # 添加小订数列
+            for vehicle in vehicles:
+                row_data[f'{vehicle} 小订数'] = vehicle_stats[vehicle]['orders']
+            
+            # 添加退订数列
+            for vehicle in vehicles:
+                row_data[f'{vehicle} 退订数'] = vehicle_stats[vehicle]['refunds']
+            
+            # 添加退订率列
+            for vehicle in vehicles:
+                row_data[f'{vehicle} 退订率'] = vehicle_stats[vehicle]['refund_rate']
+            
+            table_data.append(row_data)
+        
+        # 创建DataFrame
+        if not table_data:
+            return pd.DataFrame({'提示': [f'没有小订数大于{order_threshold}的城市']})
+        
+        table_df = pd.DataFrame(table_data)
+        
+        # 按城市名称排序
+        table_df = table_df.sort_values('城市')
+        
+        return table_df
 
 # 创建监控器实例
 monitor = OrderTrendMonitor()
@@ -1380,7 +1700,7 @@ def update_charts(selected_vehicles):
         error_df = pd.DataFrame({'错误': [str(e)]})
         return error_fig, error_fig, error_fig, error_df
 
-def update_refund_charts(selected_vehicles):
+def update_refund_charts(selected_vehicles, city_order_min=100, city_order_max=2000):
     """更新退订图表"""
     try:
         if not selected_vehicles:
@@ -1392,20 +1712,24 @@ def update_refund_charts(selected_vehicles):
                 font=dict(size=20, color="gray")
             )
             empty_df = pd.DataFrame({'提示': ['请选择车型']})
-            return empty_fig, empty_fig, empty_fig, empty_df
+            return empty_fig, empty_fig, empty_fig, empty_df, empty_df, empty_df
         
         # 准备退订相关数据
         refund_data = monitor.prepare_refund_data(selected_vehicles)
         refund_rate_data = monitor.prepare_refund_rate_data(selected_vehicles)
         daily_refund_rate_data = monitor.prepare_daily_refund_rate_data(selected_vehicles)
+        regional_summary_data = monitor.prepare_regional_summary_data(selected_vehicles)
+        city_summary_data = monitor.prepare_city_summary_data(selected_vehicles)
         
         # 创建图表
         cumulative_refund_chart = monitor.create_cumulative_refund_chart(refund_data)
         cumulative_refund_rate_chart = monitor.create_cumulative_refund_rate_chart(refund_rate_data)
         daily_refund_rate_chart = monitor.create_daily_refund_rate_chart(daily_refund_rate_data)
         daily_refund_table = monitor.create_daily_refund_table(daily_refund_rate_data)
+        regional_summary_table = monitor.create_regional_summary_table(regional_summary_data)
+        city_summary_table = monitor.create_city_summary_table(city_summary_data, [city_order_min, city_order_max])
         
-        return cumulative_refund_chart, cumulative_refund_rate_chart, daily_refund_rate_chart, daily_refund_table
+        return cumulative_refund_chart, cumulative_refund_rate_chart, daily_refund_rate_chart, daily_refund_table, regional_summary_table, city_summary_table
         
     except Exception as e:
         logger.error(f"退订图表更新失败: {str(e)}")
@@ -1417,7 +1741,7 @@ def update_refund_charts(selected_vehicles):
             font=dict(size=16, color="red")
         )
         error_df = pd.DataFrame({'错误': [str(e)]})
-        return error_fig, error_fig, error_fig, error_df
+        return error_fig, error_fig, error_fig, error_df, error_df, error_df
 
 # 获取车型列表
 vehicle_groups = monitor.get_vehicle_groups()
@@ -1476,6 +1800,38 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                 with gr.Column(scale=1):
                     daily_refund_table = gr.DataFrame(
                         label="每日订单累计退订情况表格",
+                        interactive=False,
+                        wrap=True
+                    )
+            
+            with gr.Accordion("📊 分区域汇总表格", open=True):
+                with gr.Row():
+                    regional_summary_table = gr.DataFrame(
+                        label="车型对比：分区域累计订单/退订数(退订率)汇总表格",
+                        interactive=False,
+                        wrap=True
+                    )
+            
+            with gr.Accordion("🏙️ 分城市汇总表格", open=False):
+                with gr.Row():
+                    with gr.Row():
+                        city_order_min = gr.Number(
+                            label="最小小订数",
+                            value=200,
+                            minimum=0,
+                            step=1,
+                            scale=1
+                        )
+                        city_order_max = gr.Number(
+                            label="最大小订数",
+                            value=5000,
+                            minimum=0,
+                            step=1,
+                            scale=1
+                        )
+                with gr.Row():
+                    city_summary_table = gr.DataFrame(
+                        label="车型对比：分城市累计订单/退订数(退订率)汇总表格",
                         interactive=False,
                         wrap=True
                     )
@@ -1543,8 +1899,20 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
     
     refund_vehicle_selector.change(
         fn=update_refund_charts,
-        inputs=[refund_vehicle_selector],
-        outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table]
+        inputs=[refund_vehicle_selector, city_order_min, city_order_max],
+        outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
+    )
+    
+    city_order_min.change(
+        fn=update_refund_charts,
+        inputs=[refund_vehicle_selector, city_order_min, city_order_max],
+        outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
+    )
+    
+    city_order_max.change(
+        fn=update_refund_charts,
+        inputs=[refund_vehicle_selector, city_order_min, city_order_max],
+        outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
     )
     
     # 页面加载时自动更新
@@ -1556,8 +1924,8 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
     
     demo.load(
         fn=update_refund_charts,
-        inputs=[refund_vehicle_selector],
-        outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table]
+        inputs=[refund_vehicle_selector, city_order_min, city_order_max],
+        outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
     )
     
     # 界面加载时初始化预测模块

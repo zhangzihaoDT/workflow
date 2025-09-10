@@ -11,6 +11,8 @@ from langgraph.graph import StateGraph, END
 import logging
 from pathlib import Path
 import re
+import numpy as np
+import json
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -106,12 +108,16 @@ def generate_complete_report(state: WorkflowState) -> None:
     import os
     
     try:
-        # 读取异常检测报告
+        # 读取各个分析报告
         anomaly_report_path = "/Users/zihao_/Documents/github/W35_workflow/anomaly_detection_report.md"
         structure_report_path = "/Users/zihao_/Documents/github/W35_workflow/structure_check_report.md"
+        sales_agent_report_path = "/Users/zihao_/Documents/github/W35_workflow/sales_agent_analysis_report.md"
+        time_interval_report_path = "/Users/zihao_/Documents/github/W35_workflow/time_interval_analysis_report.md"
         
         anomaly_content = ""
         structure_content = ""
+        sales_agent_content = ""
+        time_interval_content = ""
         
         if os.path.exists(anomaly_report_path):
             with open(anomaly_report_path, 'r', encoding='utf-8') as f:
@@ -121,13 +127,21 @@ def generate_complete_report(state: WorkflowState) -> None:
             with open(structure_report_path, 'r', encoding='utf-8') as f:
                 structure_content = f.read()
         
+        if os.path.exists(sales_agent_report_path):
+            with open(sales_agent_report_path, 'r', encoding='utf-8') as f:
+                sales_agent_content = f.read()
+        
+        if os.path.exists(time_interval_report_path):
+            with open(time_interval_report_path, 'r', encoding='utf-8') as f:
+                time_interval_content = f.read()
+        
         # 生成综合报告
         complete_report = f"""# W35 异常检测工作流 - 综合分析报告
 
 ## 报告概览
 - **生成时间**: {datetime.now().isoformat()}
 - **工作流版本**: W35 Anomaly Detection Workflow
-- **分析范围**: 数据质量检测 + 结构异常分析
+- **分析范围**: 数据质量检测 + 结构异常分析 + 销售代理分析 + 时间间隔分析
 
 ---
 
@@ -139,6 +153,14 @@ def generate_complete_report(state: WorkflowState) -> None:
 
 ---
 
+{sales_agent_content}
+
+---
+
+{time_interval_content}
+
+---
+
 ## 综合结论
 
 ### 数据质量状况
@@ -147,14 +169,26 @@ def generate_complete_report(state: WorkflowState) -> None:
 ### 结构异常状况
 从结构检查结果来看，CM2车型相对于历史车型在地区分布、渠道结构、人群结构方面的变化情况。
 
+### 销售代理分析状况
+从销售代理分析结果来看，不同车型在预售周期中来自Store Agent的订单比例情况。
+
+### 重复买家分析状况
+从重复买家分析结果来看，不同车型在预售周期中重复购买（同一身份证号码对应多个订单）的情况。
+
+### 时间间隔分析状况
+从时间间隔分析结果来看，不同车型在支付到退款、支付到分配等关键业务流程的时间效率表现。
+
 ### 建议措施
 1. **数据质量方面**: 根据异常检测结果，对发现的数据质量问题进行相应处理
 2. **结构异常方面**: 对发现的结构异常进行深入分析，确定是否为正常的业务变化或需要关注的异常情况
-3. **持续监控**: 建议定期运行此工作流，持续监控数据质量和结构变化
+3. **销售代理方面**: 根据销售代理订单比例分析结果，评估各车型的销售渠道效果
+4. **重复买家方面**: 根据重复买家订单比例分析结果，评估客户忠诚度和复购行为模式
+5. **时间间隔分析方面**: 根据时间间隔分析结果，优化业务流程效率，关注异常时间间隔模式
+6. **持续监控**: 建议定期运行此工作流，持续监控数据质量和结构变化
 
 ---
 
-*本报告由 W35 异常检测工作流自动生成*
+*本报告由 W35 异常检测工作流自动生成，整合了数据质量检测、结构异常分析、销售代理分析和时间间隔分析的综合结果*
 """
         
         # 保存综合报告
@@ -189,7 +223,9 @@ def update_readme_mermaid_node(state: WorkflowState) -> WorkflowState:
 flowchart TD
     A[开始] --> B[异常检测节点]
     B --> C[结构检查节点]
-    C --> D[生成综合报告]
+    C --> G[销售代理分析节点]
+    G --> H[时间间隔分析节点]
+    H --> D[生成综合报告]
     D --> E[更新README图示]
     E --> F[结束]
     
@@ -203,13 +239,26 @@ flowchart TD
     C --> C3[人群结构异常检查]
     C --> C4[生成结构检查报告]
     
+    G --> G1[读取销售代理数据]
+    G --> G2[分析各车型订单比例]
+    G --> G3[生成销售代理分析报告]
+    
+    H --> H1[支付到退款时间间隔分析]
+    H --> H2[支付到分配时间间隔分析]
+    H --> H3[车型对比分析]
+    H --> H4[生成时间间隔分析报告]
+    
     D --> D1[整合异常检测报告]
     D --> D2[整合结构检查报告]
-    D --> D3[生成综合分析报告]
+    D --> D3[整合销售代理分析报告]
+    D --> D4[整合时间间隔分析报告]
+    D --> D5[生成综合分析报告]
     
     style A fill:#e1f5fe
     style B fill:#f3e5f5
     style C fill:#e8f5e8
+    style G fill:#e3f2fd
+    style H fill:#fce4ec
     style D fill:#fff3e0
     style E fill:#ffebee
     style F fill:#f1f8e9
@@ -232,14 +281,29 @@ flowchart TD
 - 人群结构异常检测：检测性别比例和年龄段结构的大幅变化
 - 基于业务定义的时间范围进行数据筛选
 
+### 销售代理分析节点
+- 读取销售代理数据：从sales_info_data.json获取Store Agent信息
+- 订单比例分析：计算各车型预售周期中来自Store Agent的订单比例
+- 异常检测：识别销售代理订单比例的异常情况
+- 基于业务定义的预售周期进行数据筛选
+
+### 时间间隔分析节点
+- 支付到退款时间间隔分析：计算各车型从支付到退款的时间间隔统计
+- 支付到分配时间间隔分析：计算各车型从支付到分配的时间间隔统计
+- 车型对比分析：对比不同车型的时间效率表现
+- 异常检测：识别时间间隔的异常模式和趋势
+- 基于业务定义的预售周期进行数据筛选
+
 ### 综合报告生成
-- 整合异常检测和结构检查结果
-- 提供数据质量和结构异常的综合评估
+- 整合异常检测、结构检查、销售代理分析和时间间隔分析结果
+- 提供数据质量、结构异常、销售渠道和时间效率的综合评估
 - 基于检测结果提供相应的处理建议
 
 ### 报告生成
 - 自动生成详细的MD格式异常检测报告
 - 生成结构检查报告
+- 生成销售代理分析报告
+- 生成时间间隔分析报告
 - 生成综合分析报告
 - 包含数据质量评级
 - 提供可视化的异常统计信息
@@ -264,6 +328,8 @@ python main.py
 ## 输出文件
 - `anomaly_detection_report.md`: 详细的异常检测报告
 - `structure_check_report.md`: 结构检查详细报告
+- `sales_agent_analysis_report.md`: 销售代理订单比例分析报告
+- `time_interval_analysis_report.md`: 时间间隔分析详细报告
 - `complete_analysis_report.md`: 综合分析报告
 - 控制台日志: 实时处理状态信息
 
@@ -450,6 +516,488 @@ def structure_check_node(state: WorkflowState) -> WorkflowState:
         state["status"] = "failed"
     
     return state
+
+def sales_agent_analysis_node(state: WorkflowState) -> WorkflowState:
+    """
+    销售代理分析节点：分析不同车型在预售周期中来自Store Agent的订单比例
+    """
+    logger.info("开始执行销售代理分析...")
+    
+    try:
+        # 读取业务定义文件
+        business_def_path = "/Users/zihao_/Documents/github/W35_workflow/business_definition.json"
+        with open(business_def_path, 'r', encoding='utf-8') as f:
+            import json
+            presale_periods = json.load(f)
+        
+        # 读取销售代理数据
+        sales_info_path = "/Users/zihao_/Documents/coding/dataset/formatted/sales_info_data.json"
+        try:
+            with open(sales_info_path, 'r', encoding='utf-8') as f:
+                sales_info_json = json.load(f)
+                # 提取data部分
+                sales_info_data = sales_info_json.get('data', [])
+                logger.info(f"成功读取销售代理数据，共 {len(sales_info_data)} 条记录")
+        except Exception as e:
+            logger.warning(f"无法读取销售代理数据文件: {str(e)}")
+            sales_info_data = []
+        
+        # 读取订单数据
+        data_path = "/Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet"
+        df = pd.read_parquet(data_path)
+        
+        # 转换时间列
+        df['Intention_Payment_Time'] = pd.to_datetime(df['Intention_Payment_Time'])
+        
+        # 预处理订单数据中的相关字段（一次性处理，避免在循环中重复处理）
+        df['clean_store_agent_name'] = df['Store Agent Name'].fillna('').astype(str).str.strip()
+        df['clean_store_agent_id'] = df['Store Agent Id'].fillna('').astype(str).str.strip()
+        df['clean_buyer_identity'] = df['Buyer Identity No'].fillna('').astype(str).str.strip()
+        
+        # 从销售代理数据中提取销售代理信息并构建快速查找集合
+        # 字段映射：Member Name -> Store Agent Name, Member Code -> Store Agent Id, Id Card -> Buyer Identity No
+        sales_agents_lookup = set()  # 使用集合进行快速查找
+        if isinstance(sales_info_data, list):
+            for item in sales_info_data:
+                if isinstance(item, dict):
+                    # 提取三个关键字段
+                    member_name = str(item.get('Member Name', '')).strip() if item.get('Member Name') else ''
+                    member_code = str(item.get('Member Code', '')).strip() if item.get('Member Code') else ''
+                    id_card = str(item.get('Id Card', '')).strip() if item.get('Id Card') else ''
+                    
+                    # 只有当三个字段都非空时才添加到查找集合
+                    if member_name and member_code and id_card:
+                        sales_agents_lookup.add((member_name, member_code, id_card))
+        
+        # 分析各车型的销售代理订单比例
+        analysis_results = {}
+        
+        for vehicle, period in presale_periods.items():
+            start_date = pd.to_datetime(period['start'])
+            end_date = pd.to_datetime(period['end'])
+            mask = (df['Intention_Payment_Time'] >= start_date) & (df['Intention_Payment_Time'] <= end_date)
+            vehicle_df = df[mask].copy()
+            
+            if len(vehicle_df) == 0:
+                analysis_results[vehicle] = {
+                    'total_orders': 0,
+                    'store_agent_orders': 0,
+                    'store_agent_ratio': 0.0,
+                    'details': '无订单数据'
+                }
+                continue
+            
+            total_orders = len(vehicle_df)
+            
+            # 使用向量化操作检查订单是否来自销售代理
+            # 匹配条件：Store Agent Name = Member Name AND Store Agent Id = Member Code AND Buyer Identity No = Id Card
+            
+            # 创建组合字段用于快速匹配（使用已预处理的字段）
+            agent_combos = list(zip(
+                vehicle_df['clean_store_agent_name'],
+                vehicle_df['clean_store_agent_id'], 
+                vehicle_df['clean_buyer_identity']
+            ))
+            
+            # 使用集合交集快速找到匹配的订单
+            matched_combos = set(agent_combos) & sales_agents_lookup
+            
+            # 计算销售代理订单数
+            store_agent_orders = sum(1 for combo in agent_combos if combo in matched_combos)
+            
+            store_agent_ratio = store_agent_orders / total_orders if total_orders > 0 else 0.0
+            
+            analysis_results[vehicle] = {
+                'total_orders': total_orders,
+                'store_agent_orders': store_agent_orders,
+                'store_agent_ratio': store_agent_ratio,
+                'details': f'总订单数: {total_orders}, 销售代理订单数: {store_agent_orders}, 比例: {store_agent_ratio:.2%}'
+            }
+        
+        # 分析重复买家身份证号码的订单比例
+        repeat_buyer_analysis = {}
+        
+        for vehicle, period in presale_periods.items():
+            start_date = pd.to_datetime(period['start'])
+            end_date = pd.to_datetime(period['end'])
+            mask = (df['Intention_Payment_Time'] >= start_date) & (df['Intention_Payment_Time'] <= end_date)
+            vehicle_df = df[mask].copy()
+            
+            if len(vehicle_df) == 0:
+                repeat_buyer_analysis[vehicle] = {
+                    'total_orders': 0,
+                    'repeat_buyer_orders': 0,
+                    'repeat_buyer_ratio': 0.0,
+                    'unique_repeat_buyers': 0,
+                    'details': '无订单数据'
+                }
+                continue
+            
+            total_orders = len(vehicle_df)
+            
+            # 统计每个Buyer Identity No的订单数量
+            buyer_identity_counts = vehicle_df['Buyer Identity No'].value_counts()
+            
+            # 找出订单数>=2的买家身份证号码
+            repeat_buyers = buyer_identity_counts[buyer_identity_counts >= 2]
+            
+            # 计算这些重复买家的总订单数
+            repeat_buyer_orders = repeat_buyers.sum()
+            
+            # 计算比例
+            repeat_buyer_ratio = repeat_buyer_orders / total_orders if total_orders > 0 else 0.0
+            
+            repeat_buyer_analysis[vehicle] = {
+                'total_orders': total_orders,
+                'repeat_buyer_orders': repeat_buyer_orders,
+                'repeat_buyer_ratio': repeat_buyer_ratio,
+                'unique_repeat_buyers': len(repeat_buyers),
+                'details': f'总订单数: {total_orders}, 重复买家订单数: {repeat_buyer_orders}, 比例: {repeat_buyer_ratio:.2%}, 重复买家数量: {len(repeat_buyers)}'
+            }
+        
+        # 将分析结果保存到state中
+        state['sales_agent_analysis'] = analysis_results
+        state['repeat_buyer_analysis'] = repeat_buyer_analysis
+        
+        # 生成销售代理分析报告
+        generate_sales_agent_report(state, analysis_results, len(sales_agents_lookup), repeat_buyer_analysis)
+        
+        state["status"] = "sales_agent_analysis_completed"
+        logger.info("销售代理分析完成")
+        
+    except Exception as e:
+        error_msg = f"销售代理分析过程中发生错误: {str(e)}"
+        logger.error(error_msg)
+        state["errors"].append(error_msg)
+        state["status"] = "failed"
+    
+    return state
+
+def analyze_time_intervals(state: WorkflowState) -> WorkflowState:
+    """
+    分析不同车型在预售周期内订单的时间间隔差异
+    计算Intention_Payment_Time与intention_refund_time、first_assign_time之间的时间间隔（天）
+    """
+    try:
+        logger.info("开始时间间隔分析...")
+        
+        df = state["data"]
+        
+        # 读取预售周期定义
+        with open('/Users/zihao_/Documents/github/W35_workflow/business_definition.json', 'r', encoding='utf-8') as f:
+            presale_periods = json.load(f)
+        
+        # 确保时间列为datetime类型
+        time_columns = ['Intention_Payment_Time', 'intention_refund_time', 'first_assign_time']
+        for col in time_columns:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+        
+        time_interval_analysis = {}
+        
+        for vehicle, period in presale_periods.items():
+            start_date = pd.to_datetime(period['start'])
+            end_date = pd.to_datetime(period['end'])
+            
+            # 筛选预售周期内的数据
+            mask = (df['Intention_Payment_Time'] >= start_date) & (df['Intention_Payment_Time'] <= end_date)
+            vehicle_df = df[mask].copy()
+            
+            if len(vehicle_df) == 0:
+                time_interval_analysis[vehicle] = {
+                    'total_orders': 0,
+                    'payment_to_refund_stats': {},
+                    'payment_to_assign_stats': {},
+                    'details': '无订单数据'
+                }
+                continue
+            
+            total_orders = len(vehicle_df)
+            
+            # 计算Intention_Payment_Time到intention_refund_time的时间间隔
+            payment_to_refund_intervals = []
+            if 'intention_refund_time' in vehicle_df.columns:
+                valid_refund_mask = vehicle_df['intention_refund_time'].notna() & vehicle_df['Intention_Payment_Time'].notna()
+                if valid_refund_mask.any():
+                    intervals = (vehicle_df.loc[valid_refund_mask, 'intention_refund_time'] - 
+                               vehicle_df.loc[valid_refund_mask, 'Intention_Payment_Time']).dt.days
+                    payment_to_refund_intervals = intervals.tolist()
+            
+            # 计算Intention_Payment_Time到first_assign_time的时间间隔
+            payment_to_assign_intervals = []
+            if 'first_assign_time' in vehicle_df.columns:
+                valid_assign_mask = vehicle_df['first_assign_time'].notna() & vehicle_df['Intention_Payment_Time'].notna()
+                if valid_assign_mask.any():
+                    intervals = (vehicle_df.loc[valid_assign_mask, 'first_assign_time'] - 
+                               vehicle_df.loc[valid_assign_mask, 'Intention_Payment_Time']).dt.days
+                    payment_to_assign_intervals = intervals.tolist()
+            
+            # 统计分析
+            payment_to_refund_stats = {}
+            if payment_to_refund_intervals:
+                payment_to_refund_stats = {
+                    'count': len(payment_to_refund_intervals),
+                    'mean': np.mean(payment_to_refund_intervals),
+                    'median': np.median(payment_to_refund_intervals),
+                    'std': np.std(payment_to_refund_intervals),
+                    'min': np.min(payment_to_refund_intervals),
+                    'max': np.max(payment_to_refund_intervals),
+                    'q25': np.percentile(payment_to_refund_intervals, 25),
+                    'q75': np.percentile(payment_to_refund_intervals, 75)
+                }
+            
+            payment_to_assign_stats = {}
+            if payment_to_assign_intervals:
+                payment_to_assign_stats = {
+                    'count': len(payment_to_assign_intervals),
+                    'mean': np.mean(payment_to_assign_intervals),
+                    'median': np.median(payment_to_assign_intervals),
+                    'std': np.std(payment_to_assign_intervals),
+                    'min': np.min(payment_to_assign_intervals),
+                    'max': np.max(payment_to_assign_intervals),
+                    'q25': np.percentile(payment_to_assign_intervals, 25),
+                    'q75': np.percentile(payment_to_assign_intervals, 75)
+                }
+            
+            time_interval_analysis[vehicle] = {
+                'total_orders': total_orders,
+                'payment_to_refund_stats': payment_to_refund_stats,
+                'payment_to_assign_stats': payment_to_assign_stats,
+                'details': f'总订单数: {total_orders}, 退款间隔样本数: {len(payment_to_refund_intervals)}, 分配间隔样本数: {len(payment_to_assign_intervals)}'
+            }
+        
+        # 保存分析结果到state
+        state['time_interval_analysis'] = time_interval_analysis
+        
+        # 生成时间间隔分析报告
+        generate_time_interval_report(state, time_interval_analysis)
+        
+        state["status"] = "time_interval_analysis_completed"
+        logger.info("时间间隔分析完成")
+        
+    except Exception as e:
+        error_msg = f"时间间隔分析过程中发生错误: {str(e)}"
+        logger.error(error_msg)
+        state["errors"].append(error_msg)
+        state["status"] = "failed"
+    
+    return state
+
+def generate_time_interval_report(state: WorkflowState, time_interval_analysis: dict):
+    """
+    生成时间间隔分析报告
+    """
+    report_content = []
+    report_content.append("# 车型时间间隔分析报告\n")
+    report_content.append("## 分析概述\n")
+    report_content.append("本报告分析了不同车型在预售周期内订单的时间间隔差异，包括：\n")
+    report_content.append("- Intention_Payment_Time 到 intention_refund_time 的时间间隔（天）\n")
+    report_content.append("- Intention_Payment_Time 到 first_assign_time 的时间间隔（天）\n\n")
+    
+    # 支付到退款时间间隔统计表
+    report_content.append("## 支付到退款时间间隔统计\n")
+    report_content.append("| 车型 | 样本数 | 平均值(天) | 中位数(天) | 标准差 | 最小值 | 最大值 | 25%分位 | 75%分位 |\n")
+    report_content.append("|------|--------|------------|------------|--------|--------|--------|---------|---------|\n")
+    
+    for vehicle, result in time_interval_analysis.items():
+        refund_stats = result['payment_to_refund_stats']
+        if refund_stats:
+            report_content.append(f"| {vehicle} | {refund_stats['count']:,} | {refund_stats['mean']:.1f} | {refund_stats['median']:.1f} | {refund_stats['std']:.1f} | {refund_stats['min']:.0f} | {refund_stats['max']:.0f} | {refund_stats['q25']:.1f} | {refund_stats['q75']:.1f} |\n")
+        else:
+            report_content.append(f"| {vehicle} | 0 | - | - | - | - | - | - | - |\n")
+    
+    # 支付到分配时间间隔统计表
+    report_content.append("\n## 支付到分配时间间隔统计\n")
+    report_content.append("| 车型 | 样本数 | 平均值(天) | 中位数(天) | 标准差 | 最小值 | 最大值 | 25%分位 | 75%分位 |\n")
+    report_content.append("|------|--------|------------|------------|--------|--------|--------|---------|---------|\n")
+    
+    for vehicle, result in time_interval_analysis.items():
+        assign_stats = result['payment_to_assign_stats']
+        if assign_stats:
+            report_content.append(f"| {vehicle} | {assign_stats['count']:,} | {assign_stats['mean']:.1f} | {assign_stats['median']:.1f} | {assign_stats['std']:.1f} | {assign_stats['min']:.0f} | {assign_stats['max']:.0f} | {assign_stats['q25']:.1f} | {assign_stats['q75']:.1f} |\n")
+        else:
+            report_content.append(f"| {vehicle} | 0 | - | - | - | - | - | - | - |\n")
+    
+    # 详细分析
+    report_content.append("\n## 详细分析\n")
+    for vehicle, result in time_interval_analysis.items():
+        report_content.append(f"### {vehicle}车型\n")
+        report_content.append(f"{result['details']}\n\n")
+        
+        refund_stats = result['payment_to_refund_stats']
+        assign_stats = result['payment_to_assign_stats']
+        
+        if refund_stats:
+            report_content.append(f"**支付到退款时间间隔：**\n")
+            report_content.append(f"- 平均间隔：{refund_stats['mean']:.1f}天\n")
+            report_content.append(f"- 中位数间隔：{refund_stats['median']:.1f}天\n")
+            report_content.append(f"- 间隔范围：{refund_stats['min']:.0f}-{refund_stats['max']:.0f}天\n\n")
+        
+        if assign_stats:
+            report_content.append(f"**支付到分配时间间隔：**\n")
+            report_content.append(f"- 平均间隔：{assign_stats['mean']:.1f}天\n")
+            report_content.append(f"- 中位数间隔：{assign_stats['median']:.1f}天\n")
+            report_content.append(f"- 间隔范围：{assign_stats['min']:.0f}-{assign_stats['max']:.0f}天\n\n")
+    
+    # 车型对比分析
+    report_content.append("\n## 车型对比分析\n")
+    
+    # 收集有效数据的车型
+    refund_means = {}
+    assign_means = {}
+    
+    for vehicle, result in time_interval_analysis.items():
+        if result['payment_to_refund_stats']:
+            refund_means[vehicle] = result['payment_to_refund_stats']['mean']
+        if result['payment_to_assign_stats']:
+            assign_means[vehicle] = result['payment_to_assign_stats']['mean']
+    
+    if refund_means:
+        sorted_refund = sorted(refund_means.items(), key=lambda x: x[1])
+        report_content.append("### 支付到退款时间间隔排序（从短到长）\n")
+        for i, (vehicle, mean_days) in enumerate(sorted_refund, 1):
+            report_content.append(f"{i}. {vehicle}: {mean_days:.1f}天\n")
+        report_content.append("\n")
+    
+    if assign_means:
+        sorted_assign = sorted(assign_means.items(), key=lambda x: x[1])
+        report_content.append("### 支付到分配时间间隔排序（从短到长）\n")
+        for i, (vehicle, mean_days) in enumerate(sorted_assign, 1):
+            report_content.append(f"{i}. {vehicle}: {mean_days:.1f}天\n")
+        report_content.append("\n")
+    
+    # 异常检测
+    if len(refund_means) > 1:
+        refund_values = list(refund_means.values())
+        refund_mean = np.mean(refund_values)
+        refund_std = np.std(refund_values)
+        
+        report_content.append("### 支付到退款时间间隔异常检测\n")
+        report_content.append(f"平均时间间隔：{refund_mean:.1f}天，标准差：{refund_std:.1f}天\n\n")
+        
+        for vehicle, mean_days in refund_means.items():
+            z_score = abs(mean_days - refund_mean) / refund_std if refund_std > 0 else 0
+            if z_score > 2:  # 超过2个标准差认为异常
+                report_content.append(f"- **{vehicle}异常**：{mean_days:.1f}天（偏离平均值{abs(mean_days - refund_mean):.1f}天）\n")
+        report_content.append("\n")
+    
+    if len(assign_means) > 1:
+        assign_values = list(assign_means.values())
+        assign_mean = np.mean(assign_values)
+        assign_std = np.std(assign_values)
+        
+        report_content.append("### 支付到分配时间间隔异常检测\n")
+        report_content.append(f"平均时间间隔：{assign_mean:.1f}天，标准差：{assign_std:.1f}天\n\n")
+        
+        for vehicle, mean_days in assign_means.items():
+            z_score = abs(mean_days - assign_mean) / assign_std if assign_std > 0 else 0
+            if z_score > 2:  # 超过2个标准差认为异常
+                report_content.append(f"- **{vehicle}异常**：{mean_days:.1f}天（偏离平均值{abs(mean_days - assign_mean):.1f}天）\n")
+    
+    # 写入报告文件
+    report_path = "/Users/zihao_/Documents/github/W35_workflow/time_interval_analysis_report.md"
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.writelines(report_content)
+    
+    logger.info(f"时间间隔分析报告已生成: {report_path}")
+
+def generate_sales_agent_report(state: WorkflowState, analysis_results: dict, total_agents: int, repeat_buyer_analysis: dict):
+    """
+    生成销售代理分析报告
+    """
+    report_content = []
+    report_content.append("# 销售代理订单比例分析报告\n")
+    report_content.append("## 分析概述\n")
+    report_content.append("本报告分析了不同车型在预售周期中来自Store Agent的订单比例。\n\n")
+    report_content.append("**匹配条件说明：**\n")
+    report_content.append("- Store Agent Name = Member Name\n")
+    report_content.append("- Store Agent Id = Member Code\n")
+    report_content.append("- Buyer Identity No = Id Card\n")
+    report_content.append("- 三个字段必须同时匹配才认定为销售代理订单\n")
+    
+    report_content.append("## 各车型销售代理订单比例\n")
+    report_content.append("| 车型 | 总订单数 | 销售代理订单数 | 销售代理订单比例 |\n")
+    report_content.append("|------|----------|----------------|------------------|\n")
+    
+    for vehicle, result in analysis_results.items():
+        total = result['total_orders']
+        agent_orders = result['store_agent_orders']
+        ratio = result['store_agent_ratio']
+        report_content.append(f"| {vehicle} | {total:,} | {agent_orders:,} | {ratio:.2%} |\n")
+    
+    report_content.append("\n## 详细分析\n")
+    for vehicle, result in analysis_results.items():
+        report_content.append(f"### {vehicle}车型\n")
+        report_content.append(f"{result['details']}\n\n")
+    
+    # 添加重复买家分析部分
+    report_content.append("\n---\n\n")
+    report_content.append("# 重复买家订单分析报告\n")
+    report_content.append("## 分析概述\n")
+    report_content.append("本部分分析了不同车型预售周期中重复买家（Buyer Identity No对应>=2个订单）的订单比例情况。\n")
+    
+    report_content.append("## 各车型重复买家订单比例\n")
+    report_content.append("| 车型 | 总订单数 | 重复买家订单数 | 重复买家订单比例 | 重复买家数量 |\n")
+    report_content.append("|------|----------|----------------|------------------|--------------|\n")
+    
+    for vehicle, result in repeat_buyer_analysis.items():
+        total = result['total_orders']
+        repeat_orders = result['repeat_buyer_orders']
+        ratio = result['repeat_buyer_ratio']
+        unique_buyers = result['unique_repeat_buyers']
+        report_content.append(f"| {vehicle} | {total:,} | {repeat_orders:,} | {ratio:.2%} | {unique_buyers:,} |\n")
+    
+    report_content.append("\n## 重复买家详细分析\n")
+    for vehicle, result in repeat_buyer_analysis.items():
+        report_content.append(f"### {vehicle}车型\n")
+        report_content.append(f"{result['details']}\n\n")
+    
+    # 计算平均比例和异常检测
+    ratios = [result['store_agent_ratio'] for result in analysis_results.values() if result['total_orders'] > 0]
+    repeat_ratios = [result['repeat_buyer_ratio'] for result in repeat_buyer_analysis.values() if result['total_orders'] > 0]
+    
+    if ratios:
+        avg_ratio = sum(ratios) / len(ratios)
+        avg_repeat_ratio = sum(repeat_ratios) / len(repeat_ratios) if repeat_ratios else 0.0
+        
+        report_content.append(f"\n## 总体统计\n")
+        report_content.append(f"- 销售代理总数: {total_agents:,}\n")
+        report_content.append(f"- 平均销售代理订单比例: {avg_ratio:.2%}\n")
+        report_content.append(f"- 平均重复买家订单比例: {avg_repeat_ratio:.2%}\n")
+        
+        # 异常检测（偏离平均值超过20%）
+        anomalies = []
+        for vehicle, result in analysis_results.items():
+            if result['total_orders'] > 0:
+                deviation = abs(result['store_agent_ratio'] - avg_ratio)
+                if deviation > 0.2:  # 偏离超过20%
+                    anomalies.append(f"{vehicle}: {result['store_agent_ratio']:.2%} (偏离平均值 {deviation:.2%})")
+        
+        repeat_anomalies = []
+        for vehicle, result in repeat_buyer_analysis.items():
+            if result['total_orders'] > 0:
+                deviation = abs(result['repeat_buyer_ratio'] - avg_repeat_ratio)
+                if deviation > 0.2:  # 偏离超过20%
+                    repeat_anomalies.append(f"{vehicle}: {result['repeat_buyer_ratio']:.2%} (偏离平均值 {deviation:.2%})")
+        
+        if anomalies:
+            report_content.append("\n## 销售代理异常检测\n")
+            report_content.append("以下车型的销售代理订单比例存在异常（偏离平均值超过20%）:\n")
+            for anomaly in anomalies:
+                report_content.append(f"- {anomaly}\n")
+        
+        if repeat_anomalies:
+            report_content.append("\n## 重复买家异常检测\n")
+            report_content.append("以下车型的重复买家订单比例存在异常（偏离平均值超过20%）:\n")
+            for anomaly in repeat_anomalies:
+                report_content.append(f"- {anomaly}\n")
+    
+    # 写入报告文件
+    report_path = "/Users/zihao_/Documents/github/W35_workflow/sales_agent_analysis_report.md"
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.writelines(report_content)
+    
+    logger.info(f"销售代理分析报告已生成: {report_path}")
 
 # 地区分布异常分析
 def analyze_region_distribution(vehicle_data):
@@ -2727,6 +3275,8 @@ def create_workflow():
     # 添加节点
     workflow.add_node("anomaly_detection", anomaly_detection_node)
     workflow.add_node("structure_check", structure_check_node)
+    workflow.add_node("sales_agent_analysis", sales_agent_analysis_node)
+    workflow.add_node("time_interval_analysis", lambda state: analyze_time_intervals(state))
     workflow.add_node("generate_complete_report", lambda state: generate_complete_report(state) or state)
     workflow.add_node("update_readme", update_readme_mermaid_node)
     
@@ -2735,7 +3285,9 @@ def create_workflow():
     
     # 添加边
     workflow.add_edge("anomaly_detection", "structure_check")
-    workflow.add_edge("structure_check", "generate_complete_report")
+    workflow.add_edge("structure_check", "sales_agent_analysis")
+    workflow.add_edge("sales_agent_analysis", "time_interval_analysis")
+    workflow.add_edge("time_interval_analysis", "generate_complete_report")
     workflow.add_edge("generate_complete_report", "update_readme")
     workflow.add_edge("update_readme", END)
     

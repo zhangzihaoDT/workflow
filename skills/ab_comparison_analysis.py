@@ -452,14 +452,162 @@ class ABComparisonAnalyzer:
         
         return anomalies
     
+    def analyze_sales_agent_comparison(self, sample_a: pd.DataFrame, sample_b: pd.DataFrame) -> List[Dict]:
+        """销售代理分析对比"""
+        try:
+            # 读取销售代理数据
+            sales_info_path = "/Users/zihao_/Documents/coding/dataset/formatted/sales_info_data.json"
+            try:
+                with open(sales_info_path, 'r', encoding='utf-8') as f:
+                    import json
+                    sales_info_json = json.load(f)
+                    sales_info_data = sales_info_json.get('data', [])
+            except Exception as e:
+                logger.warning(f"无法读取销售代理数据文件: {str(e)}")
+                return []
+            
+            # 构建销售代理查找集合
+            sales_agents_lookup = set()
+            if isinstance(sales_info_data, list):
+                for item in sales_info_data:
+                    if isinstance(item, dict):
+                        member_name = str(item.get('Member Name', '')).strip() if item.get('Member Name') else ''
+                        member_code = str(item.get('Member Code', '')).strip() if item.get('Member Code') else ''
+                        id_card = str(item.get('Id Card', '')).strip() if item.get('Id Card') else ''
+                        
+                        if member_name and member_code and id_card:
+                            sales_agents_lookup.add((member_name, member_code, id_card))
+            
+            def analyze_sample_sales_agent(sample_df):
+                if len(sample_df) == 0:
+                    return {'total_orders': 0, 'agent_orders': 0, 'agent_ratio': 0.0, 'repeat_buyer_orders': 0, 'repeat_buyer_ratio': 0.0, 'unique_repeat_buyers': 0}
+                
+                # 预处理字段
+                sample_df = sample_df.copy()
+                sample_df['clean_store_agent_name'] = sample_df['Store Agent Name'].fillna('').astype(str).str.strip()
+                sample_df['clean_store_agent_id'] = sample_df['Store Agent Id'].fillna('').astype(str).str.strip()
+                sample_df['clean_buyer_identity'] = sample_df['Buyer Identity No'].fillna('').astype(str).str.strip()
+                
+                # 创建组合字段用于匹配
+                agent_combos = list(zip(
+                    sample_df['clean_store_agent_name'],
+                    sample_df['clean_store_agent_id'], 
+                    sample_df['clean_buyer_identity']
+                ))
+                
+                # 计算匹配的订单数
+                matched_combos = set(agent_combos) & sales_agents_lookup
+                agent_orders = sum(1 for combo in agent_combos if combo in matched_combos)
+                
+                total_orders = len(sample_df)
+                agent_ratio = agent_orders / total_orders if total_orders > 0 else 0.0
+                
+                # 重复买家分析
+                buyer_identity_counts = sample_df['Buyer Identity No'].value_counts()
+                repeat_buyers = buyer_identity_counts[buyer_identity_counts >= 2]
+                repeat_buyer_orders = repeat_buyers.sum()
+                repeat_buyer_ratio = repeat_buyer_orders / total_orders if total_orders > 0 else 0.0
+                unique_repeat_buyers = len(repeat_buyers)
+                
+                return {
+                    'total_orders': total_orders,
+                    'agent_orders': agent_orders,
+                    'agent_ratio': agent_ratio,
+                    'repeat_buyer_orders': repeat_buyer_orders,
+                    'repeat_buyer_ratio': repeat_buyer_ratio,
+                    'unique_repeat_buyers': unique_repeat_buyers
+                }
+            
+            # 分析两个样本
+            result_a = analyze_sample_sales_agent(sample_a)
+            result_b = analyze_sample_sales_agent(sample_b)
+            
+            return [{
+                'type': '销售代理分析',
+                'sample_a': result_a,
+                'sample_b': result_b
+            }]
+            
+        except Exception as e:
+            logger.error(f"销售代理分析失败: {str(e)}")
+            return []
+    
+    def analyze_time_interval_comparison(self, sample_a: pd.DataFrame, sample_b: pd.DataFrame) -> List[Dict]:
+        """时间间隔分析对比"""
+        try:
+            def analyze_sample_time_intervals(sample_df):
+                if len(sample_df) == 0:
+                    return {'payment_to_refund': {}, 'payment_to_assign': {}}
+                
+                sample_df = sample_df.copy()
+                
+                # 确保时间列为datetime类型
+                time_columns = ['Intention_Payment_Time', 'intention_refund_time', 'first_assign_time']
+                for col in time_columns:
+                    if col in sample_df.columns:
+                        sample_df[col] = pd.to_datetime(sample_df[col], errors='coerce')
+                
+                # 计算支付到退款的时间间隔
+                payment_to_refund_stats = {}
+                if 'intention_refund_time' in sample_df.columns:
+                    valid_refund_mask = sample_df['intention_refund_time'].notna() & sample_df['Intention_Payment_Time'].notna()
+                    if valid_refund_mask.any():
+                        intervals = (sample_df.loc[valid_refund_mask, 'intention_refund_time'] - 
+                                   sample_df.loc[valid_refund_mask, 'Intention_Payment_Time']).dt.days
+                        if len(intervals) > 0:
+                            payment_to_refund_stats = {
+                                'count': len(intervals),
+                                'mean': float(intervals.mean()),
+                                'median': float(intervals.median()),
+                                'std': float(intervals.std()) if len(intervals) > 1 else 0.0
+                            }
+                
+                # 计算支付到分配的时间间隔
+                payment_to_assign_stats = {}
+                if 'first_assign_time' in sample_df.columns:
+                    valid_assign_mask = sample_df['first_assign_time'].notna() & sample_df['Intention_Payment_Time'].notna()
+                    if valid_assign_mask.any():
+                        intervals = (sample_df.loc[valid_assign_mask, 'first_assign_time'] - 
+                                   sample_df.loc[valid_assign_mask, 'Intention_Payment_Time']).dt.days
+                        if len(intervals) > 0:
+                            payment_to_assign_stats = {
+                                'count': len(intervals),
+                                'mean': float(intervals.mean()),
+                                'median': float(intervals.median()),
+                                'std': float(intervals.std()) if len(intervals) > 1 else 0.0
+                            }
+                
+                return {
+                    'payment_to_refund': payment_to_refund_stats,
+                    'payment_to_assign': payment_to_assign_stats
+                }
+            
+            # 分析两个样本
+            result_a = analyze_sample_time_intervals(sample_a)
+            result_b = analyze_sample_time_intervals(sample_b)
+            
+            return [{
+                'type': '时间间隔分析',
+                'sample_a': result_a,
+                'sample_b': result_b
+            }]
+            
+        except Exception as e:
+            logger.error(f"时间间隔分析失败: {str(e)}")
+            return []
+    
     def generate_comparison_report(self, sample_a: pd.DataFrame, sample_b: pd.DataFrame, 
                                  sample_a_desc: str, sample_b_desc: str, 
-                                 parent_regions_filter: List[str] = None) -> Tuple[str, pd.DataFrame]:
+                                 parent_regions_filter: List[str] = None) -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """生成对比分析报告"""
         # 执行三种异常检测
         region_anomalies = self.analyze_region_distribution(sample_a, sample_b, parent_regions_filter)
         channel_anomalies = self.analyze_channel_structure(sample_a, sample_b)
         demographic_anomalies = self.analyze_demographic_structure(sample_a, sample_b)
+        
+        # 执行销售代理分析和时间间隔分析
+        sales_agent_results = self.analyze_sales_agent_comparison(sample_a, sample_b)
+        time_interval_results = self.analyze_time_interval_comparison(sample_a, sample_b)
         
         # 合并所有异常数据
         all_anomalies = region_anomalies + channel_anomalies + demographic_anomalies
@@ -536,7 +684,134 @@ class ABComparisonAnalyzer:
         if total_anomalies == 0:
             report += "- **持续监控**: 建议定期进行AB对比分析，及时发现潜在异常\n"
         
-        return report, anomaly_df
+        # 生成销售代理分析对比表格
+        sales_agent_data = []
+        if sales_agent_results:
+            result = sales_agent_results[0]
+            sample_a_result = result['sample_a']
+            sample_b_result = result['sample_b']
+            
+            sales_agent_data.append({
+                '指标': '总订单数',
+                '样本A': f"{sample_a_result['total_orders']:,}",
+                '样本B': f"{sample_b_result['total_orders']:,}",
+                '差异': f"{sample_a_result['total_orders'] - sample_b_result['total_orders']:+,}"
+            })
+            
+            sales_agent_data.append({
+                '指标': '销售代理订单数',
+                '样本A': f"{sample_a_result['agent_orders']:,}",
+                '样本B': f"{sample_b_result['agent_orders']:,}",
+                '差异': f"{sample_a_result['agent_orders'] - sample_b_result['agent_orders']:+,}"
+            })
+            
+            sales_agent_data.append({
+                '指标': '销售代理订单比例',
+                '样本A': f"{sample_a_result['agent_ratio']:.2%}",
+                '样本B': f"{sample_b_result['agent_ratio']:.2%}",
+                '差异': f"{sample_a_result['agent_ratio'] - sample_b_result['agent_ratio']:+.2%}"
+            })
+            
+            sales_agent_data.append({
+                '指标': '重复买家订单数',
+                '样本A': f"{sample_a_result['repeat_buyer_orders']:,}",
+                '样本B': f"{sample_b_result['repeat_buyer_orders']:,}",
+                '差异': f"{sample_a_result['repeat_buyer_orders'] - sample_b_result['repeat_buyer_orders']:+,}"
+            })
+            
+            sales_agent_data.append({
+                '指标': '重复买家订单比例',
+                '样本A': f"{sample_a_result['repeat_buyer_ratio']:.2%}",
+                '样本B': f"{sample_b_result['repeat_buyer_ratio']:.2%}",
+                '差异': f"{sample_a_result['repeat_buyer_ratio'] - sample_b_result['repeat_buyer_ratio']:+.2%}"
+            })
+            
+            sales_agent_data.append({
+                '指标': '重复买家数量',
+                '样本A': f"{sample_a_result['unique_repeat_buyers']:,}",
+                '样本B': f"{sample_b_result['unique_repeat_buyers']:,}",
+                '差异': f"{sample_a_result['unique_repeat_buyers'] - sample_b_result['unique_repeat_buyers']:+,}"
+            })
+        else:
+            sales_agent_data.append({
+                '指标': '数据获取失败',
+                '样本A': '-',
+                '样本B': '-',
+                '差异': '-'
+            })
+        
+        sales_agent_df = pd.DataFrame(sales_agent_data)
+        
+        # 生成时间间隔分析对比表格
+        time_interval_data = []
+        if time_interval_results:
+            result = time_interval_results[0]
+            sample_a_result = result['sample_a']
+            sample_b_result = result['sample_b']
+            
+            # 支付到退款时间间隔
+            refund_a = sample_a_result.get('payment_to_refund', {})
+            refund_b = sample_b_result.get('payment_to_refund', {})
+            
+            if refund_a and refund_b:
+                time_interval_data.append({
+                    '时间间隔类型': '支付到退款-样本数',
+                    '样本A': f"{refund_a.get('count', 0):,}",
+                    '样本B': f"{refund_b.get('count', 0):,}",
+                    '差异': f"{refund_a.get('count', 0) - refund_b.get('count', 0):+,}"
+                })
+                
+                time_interval_data.append({
+                    '时间间隔类型': '支付到退款-平均天数',
+                    '样本A': f"{refund_a.get('mean', 0):.1f}",
+                    '样本B': f"{refund_b.get('mean', 0):.1f}",
+                    '差异': f"{refund_a.get('mean', 0) - refund_b.get('mean', 0):+.1f}"
+                })
+                
+                time_interval_data.append({
+                    '时间间隔类型': '支付到退款-中位数天数',
+                    '样本A': f"{refund_a.get('median', 0):.1f}",
+                    '样本B': f"{refund_b.get('median', 0):.1f}",
+                    '差异': f"{refund_a.get('median', 0) - refund_b.get('median', 0):+.1f}"
+                })
+            
+            # 支付到分配时间间隔
+            assign_a = sample_a_result.get('payment_to_assign', {})
+            assign_b = sample_b_result.get('payment_to_assign', {})
+            
+            if assign_a and assign_b:
+                time_interval_data.append({
+                    '时间间隔类型': '支付到分配-样本数',
+                    '样本A': f"{assign_a.get('count', 0):,}",
+                    '样本B': f"{assign_b.get('count', 0):,}",
+                    '差异': f"{assign_a.get('count', 0) - assign_b.get('count', 0):+,}"
+                })
+                
+                time_interval_data.append({
+                    '时间间隔类型': '支付到分配-平均天数',
+                    '样本A': f"{assign_a.get('mean', 0):.1f}",
+                    '样本B': f"{assign_b.get('mean', 0):.1f}",
+                    '差异': f"{assign_a.get('mean', 0) - assign_b.get('mean', 0):+.1f}"
+                })
+                
+                time_interval_data.append({
+                    '时间间隔类型': '支付到分配-中位数天数',
+                    '样本A': f"{assign_a.get('median', 0):.1f}",
+                    '样本B': f"{assign_b.get('median', 0):.1f}",
+                    '差异': f"{assign_a.get('median', 0) - assign_b.get('median', 0):+.1f}"
+                })
+        
+        if not time_interval_data:
+            time_interval_data.append({
+                '时间间隔类型': '无有效数据',
+                '样本A': '-',
+                '样本B': '-',
+                '差异': '-'
+            })
+        
+        time_interval_df = pd.DataFrame(time_interval_data)
+        
+        return report, anomaly_df, sales_agent_df, time_interval_df
 
 # 创建分析器实例
 analyzer = ABComparisonAnalyzer()
@@ -575,11 +850,11 @@ def run_ab_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_da
         
         if len(sample_a) == 0:
             empty_df = pd.DataFrame({'错误': ['样本A数据为空，请调整筛选条件']})
-            return "❌ 样本A数据为空，请调整筛选条件", empty_df
+            return "❌ 样本A数据为空，请调整筛选条件", empty_df, empty_df, empty_df
         
         if len(sample_b) == 0:
             empty_df = pd.DataFrame({'错误': ['样本B数据为空，请调整筛选条件']})
-            return "❌ 样本B数据为空，请调整筛选条件", empty_df
+            return "❌ 样本B数据为空，请调整筛选条件", empty_df, empty_df, empty_df
         
         # 获取Parent Region筛选条件（取两个样本的交集）
         parent_regions_filter = None
@@ -592,14 +867,14 @@ def run_ab_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_da
             parent_regions_filter = parent_regions_b
         
         # 生成对比报告
-        report, anomaly_df = analyzer.generate_comparison_report(sample_a, sample_b, sample_a_desc, sample_b_desc, parent_regions_filter)
+        report, anomaly_df, sales_agent_df, time_interval_df = analyzer.generate_comparison_report(sample_a, sample_b, sample_a_desc, sample_b_desc, parent_regions_filter)
         
-        return report, anomaly_df
+        return report, anomaly_df, sales_agent_df, time_interval_df
         
     except Exception as e:
         logger.error(f"AB对比分析失败: {str(e)}")
         error_df = pd.DataFrame({'错误': [f"分析失败: {str(e)}"]})
-        return f"❌ 分析失败: {str(e)}", error_df
+        return f"❌ 分析失败: {str(e)}", error_df, error_df, error_df
 
 # 获取数据信息
 vehicle_types = analyzer.get_vehicle_types()
@@ -669,6 +944,20 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
                 wrap=True
             )
     
+    with gr.Row():
+        with gr.Column(scale=1):
+            sales_agent_table = gr.DataFrame(
+                label="销售代理分析对比",
+                interactive=False,
+                wrap=True
+            )
+        with gr.Column(scale=1):
+            time_interval_table = gr.DataFrame(
+                label="时间间隔分析对比",
+                interactive=False,
+                wrap=True
+            )
+    
     # 绑定分析函数
     analyze_btn.click(
         fn=run_ab_analysis,
@@ -680,7 +969,7 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
             pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b,
             refund_only_b, locked_only_b
         ],
-        outputs=[output, anomaly_table]
+        outputs=[output, anomaly_table, sales_agent_table, time_interval_table]
     )
     
     # 添加使用说明
