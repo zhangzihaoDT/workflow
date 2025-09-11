@@ -44,10 +44,8 @@ class ABComparisonAnalyzer:
         return []
     
     def get_pre_vehicle_model_types(self) -> List[str]:
-        """获取pre_vehicle_model_type列表"""
-        if 'pre_vehicle_model_type' in self.df.columns:
-            return sorted([str(x) for x in self.df['pre_vehicle_model_type'].dropna().unique().tolist()])
-        return []
+        """获取产品分类列表：基于Product Name分为增程和纯电"""
+        return ["增程", "纯电"]
     
     def get_parent_regions(self) -> List[str]:
         """获取Parent Region Name列表"""
@@ -56,26 +54,58 @@ class ABComparisonAnalyzer:
         return []
     
     def get_date_range(self) -> Tuple[str, str]:
-        """获取数据的日期范围"""
+        """获取订单创建时间的日期范围"""
+        if 'Order_Create_Time' in self.df.columns:
+            create_data = self.df['Order_Create_Time'].dropna()
+            if not create_data.empty:
+                min_date = create_data.min().strftime('%Y-%m-%d')
+                max_date = create_data.max().strftime('%Y-%m-%d')
+                return min_date, max_date
+        # 如果Order_Create_Time不存在或为空，使用Intention_Payment_Time作为备选
         min_date = self.df['Intention_Payment_Time'].min().strftime('%Y-%m-%d')
         max_date = self.df['Intention_Payment_Time'].max().strftime('%Y-%m-%d')
         return min_date, max_date
     
     def get_refund_date_range(self) -> Tuple[str, str]:
-        """获取退订时间的日期范围"""
+        """获取退订时间范围"""
         if 'intention_refund_time' in self.df.columns:
             refund_data = self.df['intention_refund_time'].dropna()
-            if len(refund_data) > 0:
+            if not refund_data.empty:
                 min_date = refund_data.min().strftime('%Y-%m-%d')
                 max_date = refund_data.max().strftime('%Y-%m-%d')
                 return min_date, max_date
         return '', ''
     
+    def get_order_create_date_range(self) -> Tuple[str, str]:
+        """获取订单创建时间范围"""
+        if 'Order_Create_Time' in self.df.columns:
+            create_data = self.df['Order_Create_Time'].dropna()
+            if not create_data.empty:
+                min_date = create_data.min().strftime('%Y-%m-%d')
+                max_date = create_data.max().strftime('%Y-%m-%d')
+                return min_date, max_date
+        return '', ''
+    
+    def get_lock_date_range(self) -> Tuple[str, str]:
+        """获取锁单时间范围，如果没有锁单数据则返回默认范围"""
+        if 'Lock_Time' in self.df.columns:
+            lock_data = self.df['Lock_Time'].dropna()
+            if not lock_data.empty:
+                min_date = lock_data.min().strftime('%Y-%m-%d')
+                max_date = lock_data.max().strftime('%Y-%m-%d')
+                return min_date, max_date
+        
+        # 如果没有锁单数据，返回基于订单创建时间的默认范围
+        order_min, order_max = self.get_date_range()
+        return order_min, order_max
+    
     def filter_sample(self, start_date: str = '', end_date: str = '', vehicle_types: List[str] = None, 
                      include_refund: bool = False, refund_start_date: str = '', refund_end_date: str = '',
                      pre_vehicle_model_types: List[str] = None, parent_regions: List[str] = None,
                      vehicle_groups: List[str] = None, refund_only: bool = False, 
-                     locked_only: bool = False) -> pd.DataFrame:
+                     locked_only: bool = False, order_create_start_date: str = '', order_create_end_date: str = '',
+                     lock_start_date: str = '', lock_end_date: str = '',
+                     exclude_refund: bool = False, exclude_locked: bool = False) -> pd.DataFrame:
         """筛选样本数据"""
         # 从完整数据开始
         mask = pd.Series([True] * len(self.df), index=self.df.index)
@@ -91,15 +121,49 @@ class ABComparisonAnalyzer:
                          (self.df['intention_refund_time'] <= refund_end_date)
             mask = mask & refund_mask
         
-        # 3. pre_vehicle_model_type筛选
-        if pre_vehicle_model_types and 'pre_vehicle_model_type' in self.df.columns:
-            mask = mask & (self.df['pre_vehicle_model_type'].astype(str).isin(pre_vehicle_model_types))
+        # 3. 订单创建时间范围筛选
+        if order_create_start_date and order_create_end_date and 'Order_Create_Time' in self.df.columns:
+            create_mask = (self.df['Order_Create_Time'] >= order_create_start_date) & \
+                         (self.df['Order_Create_Time'] <= order_create_end_date)
+            mask = mask & create_mask
         
-        # 4. Parent Region Name筛选
+        # 4. 锁单时间范围筛选
+        if lock_start_date and lock_end_date and 'Lock_Time' in self.df.columns:
+            lock_mask = (self.df['Lock_Time'] >= lock_start_date) & \
+                       (self.df['Lock_Time'] <= lock_end_date)
+            mask = mask & lock_mask
+        
+        # 5. 产品分类筛选（基于Product Name）
+        if pre_vehicle_model_types and 'Product Name' in self.df.columns:
+            product_mask = pd.Series([False] * len(self.df), index=self.df.index)
+            
+            for category in pre_vehicle_model_types:
+                if category == "增程":
+                    # 产品名称中包含"新一代"和数字52或66的为增程
+                    category_mask = (
+                        self.df['Product Name'].str.contains('新一代', na=False) & 
+                        (self.df['Product Name'].str.contains('52', na=False) | 
+                         self.df['Product Name'].str.contains('66', na=False))
+                    )
+                elif category == "纯电":
+                    # 其他产品为纯电
+                    category_mask = ~(
+                        self.df['Product Name'].str.contains('新一代', na=False) & 
+                        (self.df['Product Name'].str.contains('52', na=False) | 
+                         self.df['Product Name'].str.contains('66', na=False))
+                    )
+                else:
+                    category_mask = pd.Series([False] * len(self.df), index=self.df.index)
+                
+                product_mask = product_mask | category_mask
+            
+            mask = mask & product_mask
+        
+        # 6. Parent Region Name筛选
         if parent_regions and 'Parent Region Name' in self.df.columns:
             mask = mask & (self.df['Parent Region Name'].isin(parent_regions))
         
-        # 5. 车型分组筛选
+        # 7. 车型分组筛选
         if vehicle_groups and '车型分组' in self.df.columns:
             mask = mask & (self.df['车型分组'].isin(vehicle_groups))
         elif vehicle_types and '车型分组' in self.df.columns:  # 保持向后兼容
@@ -107,15 +171,23 @@ class ABComparisonAnalyzer:
         
         sample_data = self.df[mask].copy()
         
-        # 6. 是否退订筛选
+        # 8. 是否退订筛选
         if refund_only and 'intention_refund_time' in self.df.columns:
             sample_data = sample_data[sample_data['intention_refund_time'].notna()]
         elif include_refund and 'intention_refund_time' in self.df.columns:  # 保持向后兼容
             sample_data = sample_data[sample_data['intention_refund_time'].notna()]
         
-        # 7. 是否锁单筛选
+        # 9. 是否锁单筛选
         if locked_only and 'Lock_Time' in self.df.columns:
             sample_data = sample_data[sample_data['Lock_Time'].notna()]
+        
+        # 10. 排除退订数据
+        if exclude_refund and 'intention_refund_time' in self.df.columns:
+            sample_data = sample_data[sample_data['intention_refund_time'].isna()]
+        
+        # 11. 排除锁单数据
+        if exclude_locked and 'Lock_Time' in self.df.columns:
+            sample_data = sample_data[sample_data['Lock_Time'].isna()]
         
         return sample_data
     
@@ -205,7 +277,7 @@ class ABComparisonAnalyzer:
                                  'sample_b_abs': abs_b,
                                  'sample_a_ratio': ratio_a,
                                  'sample_b_ratio': ratio_b,
-                                 'change': abs(ratio_a - ratio_b),
+                                 'change': ratio_a - ratio_b,
                                  'relative_change': relative_change
                              })
                         else:  # 新出现的地区
@@ -296,7 +368,7 @@ class ABComparisonAnalyzer:
                              'sample_b_abs': abs_b,
                              'sample_a_ratio': ratio_a,
                              'sample_b_ratio': ratio_b,
-                             'change': abs(ratio_a - ratio_b),
+                             'change': ratio_a - ratio_b,
                              'relative_change': relative_change
                          })
                     else:  # 新出现的渠道
@@ -373,7 +445,7 @@ class ABComparisonAnalyzer:
                          'sample_b_abs': abs_b,
                          'sample_a_ratio': ratio_a,
                          'sample_b_ratio': ratio_b,
-                         'change': abs(ratio_a - ratio_b),
+                         'change': ratio_a - ratio_b,
                          'relative_change': relative_change
                      })
         
@@ -446,7 +518,7 @@ class ABComparisonAnalyzer:
                          'sample_b_abs': abs_b,
                          'sample_a_ratio': ratio_a,
                          'sample_b_ratio': ratio_b,
-                         'change': abs(ratio_a - ratio_b),
+                         'change': ratio_a - ratio_b,
                          'relative_change': relative_change
                      })
         
@@ -616,6 +688,26 @@ class ABComparisonAnalyzer:
         anomaly_data = []
         
         for anomaly in all_anomalies:
+            # 为占比变化添加颜色标识
+            change_value = anomaly['change']
+            if change_value > 0:
+                change_display = f"<span style='color: red;'>+{change_value:.2%}</span>"
+            elif change_value < 0:
+                change_display = f"<span style='color: green;'>{change_value:.2%}</span>"
+            else:
+                change_display = f"{change_value:.2%}"
+            
+            # 为环比变化添加颜色标识
+            relative_change_value = anomaly['relative_change']
+            if relative_change_value == float('inf'):
+                relative_change_display = "新增"
+            elif relative_change_value > 0:
+                relative_change_display = f"<span style='color: red;'>+{relative_change_value:.1%}</span>"
+            elif relative_change_value < 0:
+                relative_change_display = f"<span style='color: green;'>{relative_change_value:.1%}</span>"
+            else:
+                relative_change_display = f"{relative_change_value:.1%}"
+            
             anomaly_data.append({
                 '异常类型': anomaly['type'],
                 '异常项目': anomaly['item'],
@@ -624,8 +716,8 @@ class ABComparisonAnalyzer:
                 '样本B绝对值': f"{anomaly['sample_b_abs']:,}",
                 '样本A占比': f"{anomaly['sample_a_ratio']:.2%}",
                 '样本B占比': f"{anomaly['sample_b_ratio']:.2%}",
-                '占比变化': f"{anomaly['change']:+.2%}",
-                '环比变化': f"{anomaly['relative_change']:+.1%}" if anomaly['relative_change'] != float('inf') else "新增",
+                '占比变化': change_display,
+                '环比变化': relative_change_display,
                 '风险等级': '⚠️ 中等'
             })
         
@@ -817,22 +909,28 @@ class ABComparisonAnalyzer:
 analyzer = ABComparisonAnalyzer()
 
 def run_ab_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_a,
+                   order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
                    pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a, 
-                   refund_only_a, locked_only_a,
+                   refund_only_a, locked_only_a, exclude_refund_a, exclude_locked_a,
                    start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
+                   order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
                    pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b,
-                   refund_only_b, locked_only_b):
+                   refund_only_b, locked_only_b, exclude_refund_b, exclude_locked_b):
     """执行AB对比分析"""
     try:
         # 筛选样本A
         sample_a = analyzer.filter_sample(
             start_date=start_date_a, end_date=end_date_a,
             refund_start_date=refund_start_date_a, refund_end_date=refund_end_date_a,
+            order_create_start_date=order_create_start_date_a, order_create_end_date=order_create_end_date_a,
+            lock_start_date=lock_start_date_a, lock_end_date=lock_end_date_a,
             pre_vehicle_model_types=pre_vehicle_model_types_a if pre_vehicle_model_types_a else None,
             parent_regions=parent_regions_a if parent_regions_a else None,
             vehicle_groups=vehicle_types_a if vehicle_types_a else None,
             refund_only=refund_only_a,
-            locked_only=locked_only_a
+            locked_only=locked_only_a,
+            exclude_refund=exclude_refund_a,
+            exclude_locked=exclude_locked_a
         )
         sample_a_desc = f"{start_date_a}至{end_date_a}, 车型:{','.join(vehicle_types_a) if vehicle_types_a else '全部'}, {'仅退订' if refund_only_a else ''}{'仅锁单' if locked_only_a else ''}"
         
@@ -840,11 +938,15 @@ def run_ab_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_da
         sample_b = analyzer.filter_sample(
             start_date=start_date_b, end_date=end_date_b,
             refund_start_date=refund_start_date_b, refund_end_date=refund_end_date_b,
+            order_create_start_date=order_create_start_date_b, order_create_end_date=order_create_end_date_b,
+            lock_start_date=lock_start_date_b, lock_end_date=lock_end_date_b,
             pre_vehicle_model_types=pre_vehicle_model_types_b if pre_vehicle_model_types_b else None,
             parent_regions=parent_regions_b if parent_regions_b else None,
             vehicle_groups=vehicle_types_b if vehicle_types_b else None,
             refund_only=refund_only_b,
-            locked_only=locked_only_b
+            locked_only=locked_only_b,
+            exclude_refund=exclude_refund_b,
+            exclude_locked=exclude_locked_b
         )
         sample_b_desc = f"{start_date_b}至{end_date_b}, 车型:{','.join(vehicle_types_b) if vehicle_types_b else '全部'}, {'仅退订' if refund_only_b else ''}{'仅锁单' if locked_only_b else ''}"
         
@@ -882,6 +984,8 @@ pre_vehicle_model_types = analyzer.get_pre_vehicle_model_types()
 parent_regions = analyzer.get_parent_regions()
 min_date, max_date = analyzer.get_date_range()
 refund_min_date, refund_max_date = analyzer.get_refund_date_range()
+order_create_min_date, order_create_max_date = analyzer.get_order_create_date_range()
+lock_min_date, lock_max_date = analyzer.get_lock_date_range()
 
 # 创建Gradio界面
 with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
@@ -904,11 +1008,25 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
                     refund_start_date_a = gr.Textbox(label="退订开始日期", value="", placeholder="YYYY-MM-DD（可选）")
                     refund_end_date_a = gr.Textbox(label="退订结束日期", value="", placeholder="YYYY-MM-DD（可选）")
             
-            pre_vehicle_model_types_a = gr.CheckboxGroup(choices=pre_vehicle_model_types, label="pre_vehicle_model_type", value=[])
+            with gr.Group():
+                gr.Markdown("### 订单创建时间范围")
+                with gr.Row():
+                    order_create_start_date_a = gr.Textbox(label="创建开始日期", value="", placeholder="YYYY-MM-DD（可选）")
+                    order_create_end_date_a = gr.Textbox(label="创建结束日期", value="", placeholder="YYYY-MM-DD（可选）")
+            
+            with gr.Group():
+                gr.Markdown("### 锁单时间范围")
+                with gr.Row():
+                    lock_start_date_a = gr.Textbox(label="锁单开始日期", value=lock_min_date, placeholder="YYYY-MM-DD（可选）")
+                    lock_end_date_a = gr.Textbox(label="锁单结束日期", value=lock_max_date, placeholder="YYYY-MM-DD（可选）")
+            
+            pre_vehicle_model_types_a = gr.CheckboxGroup(choices=pre_vehicle_model_types, label="产品分类（增程/纯电）", value=[])
             parent_regions_a = gr.Dropdown(choices=parent_regions, label="Parent Region Name", multiselect=True, value=None)
             vehicle_types_a = gr.CheckboxGroup(choices=vehicle_types, label="车型选择", value=[])
             refund_only_a = gr.Checkbox(label="仅退订数据", value=False)
             locked_only_a = gr.Checkbox(label="仅锁单数据", value=False)
+            exclude_refund_a = gr.Checkbox(label="排除退订数据", value=False)
+            exclude_locked_a = gr.Checkbox(label="排除锁单数据", value=False)
         
         with gr.Column(scale=1):
             gr.Markdown("## 📊 样本B配置")
@@ -925,11 +1043,25 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
                     refund_start_date_b = gr.Textbox(label="退订开始日期", value="", placeholder="YYYY-MM-DD（可选）")
                     refund_end_date_b = gr.Textbox(label="退订结束日期", value="", placeholder="YYYY-MM-DD（可选）")
             
-            pre_vehicle_model_types_b = gr.CheckboxGroup(choices=pre_vehicle_model_types, label="pre_vehicle_model_type", value=[])
+            with gr.Group():
+                gr.Markdown("### 订单创建时间范围")
+                with gr.Row():
+                    order_create_start_date_b = gr.Textbox(label="创建开始日期", value="", placeholder="YYYY-MM-DD（可选）")
+                    order_create_end_date_b = gr.Textbox(label="创建结束日期", value="", placeholder="YYYY-MM-DD（可选）")
+            
+            with gr.Group():
+                gr.Markdown("### 锁单时间范围")
+                with gr.Row():
+                    lock_start_date_b = gr.Textbox(label="锁单开始日期", value=lock_min_date, placeholder="YYYY-MM-DD（可选）")
+                    lock_end_date_b = gr.Textbox(label="锁单结束日期", value=lock_max_date, placeholder="YYYY-MM-DD（可选）")
+            
+            pre_vehicle_model_types_b = gr.CheckboxGroup(choices=pre_vehicle_model_types, label="产品分类（增程/纯电）", value=[])
             parent_regions_b = gr.Dropdown(choices=parent_regions, label="Parent Region Name", multiselect=True, value=None)
             vehicle_types_b = gr.CheckboxGroup(choices=vehicle_types, label="车型选择", value=[])
             refund_only_b = gr.Checkbox(label="仅退订数据", value=False)
             locked_only_b = gr.Checkbox(label="仅锁单数据", value=False)
+            exclude_refund_b = gr.Checkbox(label="排除退订数据", value=False)
+            exclude_locked_b = gr.Checkbox(label="排除锁单数据", value=False)
     
     with gr.Row():
         analyze_btn = gr.Button("🚀 开始分析", variant="primary", size="lg")
@@ -941,7 +1073,8 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
             anomaly_table = gr.DataFrame(
                 label="异常数据详情",
                 interactive=False,
-                wrap=True
+                wrap=True,
+                datatype=["str", "str", "str", "str", "str", "str", "str", "html", "html", "str"]
             )
     
     with gr.Row():
@@ -963,11 +1096,13 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
         fn=run_ab_analysis,
         inputs=[
             start_date_a, end_date_a, refund_start_date_a, refund_end_date_a,
+            order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
             pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a,
-            refund_only_a, locked_only_a,
+            refund_only_a, locked_only_a, exclude_refund_a, exclude_locked_a,
             start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
+            order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
             pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b,
-            refund_only_b, locked_only_b
+            refund_only_b, locked_only_b, exclude_refund_b, exclude_locked_b
         ],
         outputs=[output, anomaly_table, sales_agent_table, time_interval_table]
     )

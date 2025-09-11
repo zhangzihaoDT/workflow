@@ -1727,6 +1727,144 @@ def analyze_time_series_anomalies(vehicle_data, presale_periods):
     return anomalies
 
 # 生成日环比描述数据
+def generate_post_launch_lock_analysis(vehicle_data, presale_periods):
+    """
+    生成发布会后第N日锁单数据对比分析
+    包括：CM2车型锁单数、小订留存锁单数、同期其他车型对比、累计对比
+    
+    第N日计算逻辑：
+    - CM2: N = max(Lock_Time) - CM2最大日期的时间差
+    - 其他车型: 使用CM2的N值，匹配各自最大日期 + (N-1) 对应的lock_time
+    """
+    analysis_data = {
+        'cm2_lock_orders': {},
+        'cm2_small_order_retention': {},
+        'other_vehicles_lock_orders': {},
+        'other_vehicles_small_order_retention': {},
+        'cumulative_lock_orders': {},
+        'cumulative_small_order_retention': {}
+    }
+    
+    # 获取各车型的最大日期
+    max_dates = {}
+    for vehicle, period in presale_periods.items():
+        max_dates[vehicle] = pd.to_datetime(period['end'])
+    
+    # 首先处理CM2车型数据，计算基准N值
+    cm2_n_days = None
+    cm2_data = vehicle_data.get('CM2')
+    if cm2_data is not None and len(cm2_data) > 0:
+        cm2_max_date = max_dates.get('CM2')
+        if cm2_max_date is not None:
+            # 获取有Lock_Time的订单
+            cm2_lock_data = cm2_data[cm2_data['Lock_Time'].notna()].copy()
+            
+            if not cm2_lock_data.empty:
+                max_lock_time = cm2_lock_data['Lock_Time'].max()
+                cm2_n_days = (max_lock_time - cm2_max_date).days
+                
+                # CM2锁单数（含有Lock_Time的订单数）
+                cm2_lock_count = len(cm2_lock_data)
+                
+                # CM2小订留存锁单数（同时含有Lock_Time、Intention_Payment_Time且Intention_Payment_Time小于最大日期）
+                cm2_small_retention = cm2_lock_data[
+                    (cm2_lock_data['Intention_Payment_Time'].notna()) & 
+                    (cm2_lock_data['Intention_Payment_Time'] < cm2_max_date)
+                ]
+                cm2_small_retention_count = len(cm2_small_retention)
+                
+                analysis_data['cm2_lock_orders'] = {
+                    'n_days': cm2_n_days,
+                    'max_lock_time': max_lock_time.strftime('%Y-%m-%d'),
+                    'lock_orders_count': cm2_lock_count
+                }
+                
+                analysis_data['cm2_small_order_retention'] = {
+                    'n_days': cm2_n_days,
+                    'small_retention_count': cm2_small_retention_count
+                }
+    
+    # 处理其他车型的同期数据（使用CM2的N值）
+    if cm2_n_days is not None:
+        for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+            if vehicle not in vehicle_data or len(vehicle_data[vehicle]) == 0:
+                continue
+            if vehicle not in max_dates:
+                continue
+                
+            vehicle_data_copy = vehicle_data[vehicle].copy()
+            vehicle_max_date = max_dates[vehicle]
+            
+            # 计算该车型对应的目标日期：最大日期 + (N-1)
+            target_date = vehicle_max_date + pd.Timedelta(days=cm2_n_days-1)
+            
+            # 获取有Lock_Time的订单，并筛选Lock_Time等于目标日期的订单
+            vehicle_lock_data = vehicle_data_copy[
+                (vehicle_data_copy['Lock_Time'].notna()) & 
+                (vehicle_data_copy['Lock_Time'].dt.date == target_date.date())
+            ].copy()
+            
+            # 锁单数
+            vehicle_lock_count = len(vehicle_lock_data)
+            
+            # 小订留存锁单数
+            vehicle_small_retention = vehicle_lock_data[
+                (vehicle_lock_data['Intention_Payment_Time'].notna()) & 
+                (vehicle_lock_data['Intention_Payment_Time'] < vehicle_max_date)
+            ]
+            vehicle_small_retention_count = len(vehicle_small_retention)
+            
+            analysis_data['other_vehicles_lock_orders'][vehicle] = {
+                'n_days': cm2_n_days,
+                'target_date': target_date.strftime('%Y-%m-%d'),
+                'lock_orders_count': vehicle_lock_count
+            }
+            
+            analysis_data['other_vehicles_small_order_retention'][vehicle] = {
+                'n_days': cm2_n_days,
+                'small_retention_count': vehicle_small_retention_count
+            }
+    
+    # 计算累计数据（按车型分别统计）
+    cumulative_lock_by_vehicle = {}
+    cumulative_small_by_vehicle = {}
+    total_lock_orders = 0
+    total_small_retention = 0
+    
+    # CM2累计
+    if 'lock_orders_count' in analysis_data['cm2_lock_orders']:
+        cm2_lock_count = analysis_data['cm2_lock_orders']['lock_orders_count']
+        cumulative_lock_by_vehicle['CM2'] = cm2_lock_count
+        total_lock_orders += cm2_lock_count
+    
+    if 'small_retention_count' in analysis_data['cm2_small_order_retention']:
+        cm2_small_count = analysis_data['cm2_small_order_retention']['small_retention_count']
+        cumulative_small_by_vehicle['CM2'] = cm2_small_count
+        total_small_retention += cm2_small_count
+    
+    # 其他车型累计
+    for vehicle, vehicle_data_item in analysis_data['other_vehicles_lock_orders'].items():
+        lock_count = vehicle_data_item['lock_orders_count']
+        cumulative_lock_by_vehicle[vehicle] = lock_count
+        total_lock_orders += lock_count
+    
+    for vehicle, vehicle_data_item in analysis_data['other_vehicles_small_order_retention'].items():
+        small_count = vehicle_data_item['small_retention_count']
+        cumulative_small_by_vehicle[vehicle] = small_count
+        total_small_retention += small_count
+    
+    analysis_data['cumulative_lock_orders'] = {
+        'total_count': total_lock_orders,
+        'by_vehicle': cumulative_lock_by_vehicle
+    }
+    
+    analysis_data['cumulative_small_order_retention'] = {
+        'total_count': total_small_retention,
+        'by_vehicle': cumulative_small_by_vehicle
+    }
+    
+    return analysis_data
+
 def generate_time_series_description(vehicle_data, presale_periods):
     """
     生成CM2车型的日环比描述数据
@@ -2552,6 +2690,9 @@ def generate_structure_report(state, vehicle_data, anomalies):
     # 生成日环比描述数据
     time_series_desc = generate_time_series_description(vehicle_data, state.get('presale_periods', {}))
     
+    # 生成发布会后第N日锁单数据对比分析
+    lock_analysis = generate_post_launch_lock_analysis(vehicle_data, state.get('presale_periods', {}))
+    
     # 将时间序列数据存储到state中，供退订率日环比异常检测使用
     if 'time_series_data' not in state:
         state['time_series_data'] = {}
@@ -3252,6 +3393,65 @@ def generate_structure_report(state, vehicle_data, anomalies):
     report_content += "- **日环比异常**: 检查CM2车型内部相邻日期订单量变化超过50%的情况\n"
     report_content += "- **同周期对比异常**: 检查CM2相对于历史车型(CM0, CM1, DM0, DM1)相同相对天数的订单量变化超过50%的情况\n"
     report_content += "- **累计同周期对比异常**: 检查CM2累计订单量相对于历史车型同期累计订单量变化超过50%的情况\n"
+    
+    # 添加发布会后第N日锁单数据对比分析
+    report_content += "\n### 🔒 发布会后第N日锁单数据对比分析\n\n"
+    
+    if lock_analysis:
+        # 1. CM2车型发布会后第N日锁单数据对比
+        if 'cm2_lock_orders' in lock_analysis and lock_analysis['cm2_lock_orders']:
+            cm2_lock = lock_analysis['cm2_lock_orders']
+            report_content += f"#### 📊 CM2车型发布会后第{cm2_lock.get('n_days', 'N')}日锁单数据对比\n\n"
+            report_content += f"- **锁单数**: {cm2_lock.get('lock_orders_count', 0)}单\n"
+            report_content += f"- **最大锁单时间**: {cm2_lock.get('max_lock_time', 'N/A')}\n\n"
+        
+        # 2. CM2车型发布会后第N日小订留存锁单数据对比
+        if 'cm2_small_order_retention' in lock_analysis and lock_analysis['cm2_small_order_retention']:
+            cm2_small = lock_analysis['cm2_small_order_retention']
+            report_content += f"#### 📈 CM2车型发布会后第{cm2_small.get('n_days', 'N')}日小订留存锁单数据对比\n\n"
+            report_content += f"- **小订留存锁单数**: {cm2_small.get('small_retention_count', 0)}单\n\n"
+        
+        # 3. 同期其他车型发布会后第N日锁单数据对比
+        if 'other_vehicles_lock_orders' in lock_analysis and lock_analysis['other_vehicles_lock_orders']:
+            report_content += "#### 🚗 同期其他车型发布会后第N日锁单数据对比\n\n"
+            for vehicle, data in lock_analysis['other_vehicles_lock_orders'].items():
+                report_content += f"**{vehicle}车型** (第{data.get('n_days', 'N')}日, {data.get('target_date', 'N/A')}):\n"
+                report_content += f"- 锁单数: {data.get('lock_orders_count', 0)}单\n\n"
+        
+        # 4. 同期其他车型小订留存锁单数据对比
+        if 'other_vehicles_small_order_retention' in lock_analysis and lock_analysis['other_vehicles_small_order_retention']:
+            report_content += "#### 📋 同期其他车型发布会后第N日小订留存锁单数据对比\n\n"
+            for vehicle, data in lock_analysis['other_vehicles_small_order_retention'].items():
+                report_content += f"**{vehicle}车型** (第{data.get('n_days', 'N')}日):\n"
+                report_content += f"- 小订留存锁单数: {data.get('small_retention_count', 0)}单\n\n"
+        
+        # 5. 所有车型发布会后第N日累计锁单数据对比
+        if 'cumulative_lock_orders' in lock_analysis and lock_analysis['cumulative_lock_orders']:
+            cumulative_lock = lock_analysis['cumulative_lock_orders']
+            report_content += "#### 📊 所有车型发布会后第N日累计锁单数据对比\n\n"
+            report_content += f"- **累计锁单数总计**: {cumulative_lock.get('total_count', 0)}单\n\n"
+            
+            # 按车型分别显示
+            if 'by_vehicle' in cumulative_lock and cumulative_lock['by_vehicle']:
+                report_content += "**各车型锁单数详情**:\n"
+                for vehicle, count in cumulative_lock['by_vehicle'].items():
+                    report_content += f"- {vehicle}车型: {count}单\n"
+                report_content += "\n"
+        
+        # 6. 所有车型累计小订留存锁单数据对比
+        if 'cumulative_small_order_retention' in lock_analysis and lock_analysis['cumulative_small_order_retention']:
+            cumulative_small = lock_analysis['cumulative_small_order_retention']
+            report_content += "#### 📈 所有车型发布会后第N日累计小订留存锁单数据对比\n\n"
+            report_content += f"- **累计小订留存锁单数总计**: {cumulative_small.get('total_count', 0)}单\n\n"
+            
+            # 按车型分别显示
+            if 'by_vehicle' in cumulative_small and cumulative_small['by_vehicle']:
+                report_content += "**各车型小订留存锁单数详情**:\n"
+                for vehicle, count in cumulative_small['by_vehicle'].items():
+                    report_content += f"- {vehicle}车型: {count}单\n"
+                report_content += "\n"
+    else:
+        report_content += "**⚠️ 无法生成锁单数据对比分析**: 缺少锁单分析数据\n\n"
     
     # 保存报告
     report_path = "/Users/zihao_/Documents/github/W35_workflow/structure_check_report.md"
