@@ -2,12 +2,12 @@
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet
-- **生成时间**: 2025-09-11T14:03:36.406011
-- **文件大小**: 14.25 MB
+- **生成时间**: 2025-09-12T08:59:50.353204
+- **文件大小**: 14.27 MB
 
 ## 数据基本信息
-- **数据形状**: 338871 行 × 26 列
-- **数据完整性**: 84.41%
+- **数据形状**: 339073 行 × 26 列
+- **数据完整性**: 84.44%
 - **重复行数**: 0
 
 ## 数据类型分布
@@ -31,23 +31,22 @@ Order_Create_Time, Intention_Payment_Time, intention_refund_time, first_assign_t
 
 | 列名 | 缺失数量 | 缺失比例 |
 |------|----------|----------|
-| pre_vehicle_model_type | 314452 | 92.79% |
-| Store Agent Name | 235 | 0.07% |
-| Store Agent Id | 235 | 0.07% |
-| Store Agent Phone | 235 | 0.07% |
-| Buyer Identity No | 127224 | 37.54% |
-| Intention_Payment_Time | 179232 | 52.89% |
-| intention_refund_time | 258913 | 76.40% |
-| Intention Payment Time 小时 | 179232 | 52.89% |
-| Lock_Time | 199853 | 58.98% |
-| buyer_age | 110630 | 32.65% |
+| pre_vehicle_model_type | 314653 | 92.80% |
+| Store Agent Name | 161 | 0.05% |
+| Store Agent Id | 161 | 0.05% |
+| Store Agent Phone | 161 | 0.05% |
+| Buyer Identity No | 127388 | 37.57% |
+| Intention_Payment_Time | 179400 | 52.91% |
+| intention_refund_time | 257142 | 75.84% |
+| Intention Payment Time 小时 | 179400 | 52.91% |
+| Lock_Time | 199197 | 58.75% |
+| buyer_age | 110735 | 32.66% |
 | first_touch_time | 1628 | 0.48% |
-| Parent Region Name | 1 | 0.00% |
-| license_city_level | 2116 | 0.62% |
+| license_city_level | 2117 | 0.62% |
 
 ### 重复数据检查
 ✅ 未发现重复数据
 
 ## 数据质量评估
 - **整体评级**: 一般 ⚠️
-- **完整性得分**: 84.41%
+- **完整性得分**: 84.44%

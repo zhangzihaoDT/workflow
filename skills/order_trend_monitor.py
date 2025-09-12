@@ -42,8 +42,6 @@ def get_dynamic_vehicle_data(vehicle_name: str) -> pd.DataFrame:
         if vehicle_name not in business_def:
             logger.warning(f"车型 {vehicle_name} 不在业务定义中")
             return pd.DataFrame()
-        
-        # 筛选车型数据
         vehicle_data = df[df['车型分组'] == vehicle_name].copy()
         if len(vehicle_data) == 0:
             logger.warning(f"未找到车型 {vehicle_name} 的数据")
@@ -703,6 +701,10 @@ class OrderTrendMonitor:
             # 确保日期列为datetime类型
             if 'Intention_Payment_Time' in self.df.columns:
                 self.df['Intention_Payment_Time'] = pd.to_datetime(self.df['Intention_Payment_Time'])
+            if 'intention_refund_time' in self.df.columns:
+                self.df['intention_refund_time'] = pd.to_datetime(self.df['intention_refund_time'])
+            if 'Lock_Time' in self.df.columns:
+                self.df['Lock_Time'] = pd.to_datetime(self.df['Lock_Time'])
             logger.info(f"数据加载成功，共{len(self.df)}条记录")
         except Exception as e:
             logger.error(f"数据加载失败: {str(e)}")
@@ -731,6 +733,14 @@ class OrderTrendMonitor:
         
         start_date = datetime.strptime(self.business_def[vehicle_group]['start'], '%Y-%m-%d')
         return (date - start_date).days + 1  # 第1日开始计算
+    
+    def calculate_days_from_end(self, vehicle_group: str, date: datetime) -> int:
+        """计算从预售结束的天数（用于锁单第N日计算）"""
+        if vehicle_group not in self.business_def:
+            return -1
+        
+        end_date = datetime.strptime(self.business_def[vehicle_group]['end'], '%Y-%m-%d')
+        return (date - end_date).days  # 预售结束当天为第0日开始计算
     
     def prepare_daily_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
         """准备每日数据"""
@@ -1001,13 +1011,13 @@ class OrderTrendMonitor:
             
             # 计算从预售开始的天数
             daily_refunds['days_from_start'] = daily_refunds['refund_date'].apply(
-                lambda x: self.calculate_days_from_start(vehicle, x)
+                lambda x: self.calculate_days_from_start(vehicle, x.to_pydatetime() if hasattr(x, 'to_pydatetime') else x)
             )
             
             # 过滤有效天数（>=1 且 <= max_days）
             daily_refunds = daily_refunds[
-                (daily_refunds['days_from_start'] >= 1) & 
-                (daily_refunds['days_from_start'] <= max_days)
+                (pd.to_numeric(daily_refunds['days_from_start'], errors='coerce') >= 1) & 
+                (pd.to_numeric(daily_refunds['days_from_start'], errors='coerce') <= max_days)
             ]
             
             # 计算累计退订数
@@ -1082,9 +1092,14 @@ class OrderTrendMonitor:
             if not cm2_data.empty:
                 cm2_start = datetime.strptime(self.business_def['CM2']['start'], '%Y-%m-%d')
                 cm2_data_copy = cm2_data.copy()
-                cm2_data_copy['date'] = cm2_data_copy['Intention_Payment_Time'].dt.date
-                cm2_latest_date = cm2_data_copy['date'].max()
-                cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
+                cm2_data_copy['date'] = pd.to_datetime(cm2_data_copy['Intention_Payment_Time']).dt.date
+                # 过滤掉NaN值，确保数据类型一致
+                valid_dates = cm2_data_copy['date'].dropna()
+                cm2_latest_date = valid_dates.max() if not valid_dates.empty else None
+                if cm2_latest_date is not None:
+                    cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
+                else:
+                    cm2_current_day = None
         
         # 如果没有CM2数据，则动态计算观察时间点
         if cm2_current_day is None:
@@ -1151,7 +1166,7 @@ class OrderTrendMonitor:
                     # 只考虑在观察截止时间点前的退订
                     refunded_before_cutoff = vehicle_data[
                         (vehicle_data['intention_refund_time'].notna()) &
-                        (vehicle_data['intention_refund_time'] <= observation_cutoff_date)
+                        (pd.to_datetime(vehicle_data['intention_refund_time']) <= observation_cutoff_date)
                     ]
                     refunded_order_ids = set(refunded_before_cutoff.index)
                     # 计算当日订单中有多少在观察截止时间点前退订了
@@ -1354,9 +1369,14 @@ class OrderTrendMonitor:
             if not cm2_data.empty:
                 cm2_start = datetime.strptime(self.business_def['CM2']['start'], '%Y-%m-%d')
                 cm2_data_copy = cm2_data.copy()
-                cm2_data_copy['date'] = cm2_data_copy['Intention_Payment_Time'].dt.date
-                cm2_latest_date = cm2_data_copy['date'].max()
-                cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
+                cm2_data_copy['date'] = pd.to_datetime(cm2_data_copy['Intention_Payment_Time']).dt.date
+                # 过滤掉NaN值，确保数据类型一致
+                valid_dates = cm2_data_copy['date'].dropna()
+                cm2_latest_date = valid_dates.max() if not valid_dates.empty else None
+                if cm2_latest_date is not None:
+                    cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
+                else:
+                    cm2_current_day = None
         
         # 如果没有CM2数据，则动态计算观察时间点
         if cm2_current_day is None:
@@ -1413,7 +1433,7 @@ class OrderTrendMonitor:
                 if 'intention_refund_time' in vehicle_df.columns:
                     refund_df = vehicle_df[
                         (vehicle_df['intention_refund_time'].notna()) &
-                        (vehicle_df['intention_refund_time'] <= observation_cutoff_date)
+                        (pd.to_datetime(vehicle_df['intention_refund_time']) <= observation_cutoff_date)
                     ]
                     region_refunds = refund_df.groupby(available_region_col).size().reset_index(name='refunds')
                 else:
@@ -1502,9 +1522,14 @@ class OrderTrendMonitor:
             if not cm2_data.empty:
                 cm2_start = datetime.strptime(self.business_def['CM2']['start'], '%Y-%m-%d')
                 cm2_data_copy = cm2_data.copy()
-                cm2_data_copy['date'] = cm2_data_copy['Intention_Payment_Time'].dt.date
-                cm2_latest_date = cm2_data_copy['date'].max()
-                cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
+                cm2_data_copy['date'] = pd.to_datetime(cm2_data_copy['Intention_Payment_Time']).dt.date
+                # 过滤掉NaN值，确保数据类型一致
+                valid_dates = cm2_data_copy['date'].dropna()
+                cm2_latest_date = valid_dates.max() if not valid_dates.empty else None
+                if cm2_latest_date is not None:
+                    cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
+                else:
+                    cm2_current_day = None
         
         # 如果没有CM2数据，则动态计算观察时间点
         if cm2_current_day is None:
@@ -1552,7 +1577,7 @@ class OrderTrendMonitor:
             if 'intention_refund_time' in vehicle_df.columns:
                 refund_df = vehicle_df[
                     (vehicle_df['intention_refund_time'].notna()) &
-                    (vehicle_df['intention_refund_time'] <= observation_cutoff_date)
+                    (pd.to_datetime(vehicle_df['intention_refund_time']) <= observation_cutoff_date)
                 ]
                 city_refunds = refund_df.groupby('License City').size().reset_index(name='refunds')
             else:
@@ -1658,6 +1683,407 @@ class OrderTrendMonitor:
         table_df = table_df.sort_values('城市')
         
         return table_df
+    
+    def prepare_lock_data(self, selected_vehicles: List[str], n_days: int = 30) -> pd.DataFrame:
+        """准备锁单数据
+        
+        第N日计算逻辑：
+        - 基于各车型预售结束日期 + N天来计算目标日期范围
+        - 统计每日的锁单数量（有Lock_Time的订单）
+        - 第N日是指预售结束后的第N日
+        """
+        try:
+            # 获取各车型的预售结束日期
+            end_dates = {}
+            for vehicle in selected_vehicles:
+                if vehicle in self.business_def:
+                    end_date = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
+                    end_dates[vehicle] = end_date
+            
+            # 准备锁单数据
+            lock_data = []
+            for vehicle in selected_vehicles:
+                if vehicle not in end_dates:
+                    continue
+                    
+                vehicle_data = self.df[self.df['车型分组'] == vehicle].copy()
+                vehicle_end_date = end_dates[vehicle]
+                
+                # 获取有Lock_Time的数据
+                lock_orders = vehicle_data[vehicle_data['Lock_Time'].notna()].copy()
+                
+                if lock_orders.empty:
+                    continue
+                
+                # 确保Lock_Time为datetime类型
+                lock_orders['Lock_Time'] = pd.to_datetime(lock_orders['Lock_Time'])
+                
+                # 计算每日锁单数据，从预售结束当天开始到第N日
+                start_date = vehicle_end_date  # 预售结束当天（第0日）
+                end_date = vehicle_end_date + timedelta(days=n_days)  # 预售结束后第N日
+                
+                # 按日期分组统计锁单数
+                daily_locks = []
+                current_date = start_date
+                cumulative_locks = 0
+                
+                while current_date <= end_date:
+                    # 统计当日锁单数
+                    daily_lock_count = len(lock_orders[lock_orders['Lock_Time'].dt.date == current_date.date()])
+                    cumulative_locks += daily_lock_count
+                    
+                    # 计算从预售结束的天数（第N日）
+                    days_from_end = self.calculate_days_from_end(vehicle, current_date)
+                    
+                    daily_locks.append({
+                        'vehicle': vehicle,
+                        'date': current_date,
+                        'days_from_end': days_from_end,
+                        'daily_locks': daily_lock_count,
+                        'cumulative_locks': cumulative_locks
+                    })
+                    
+                    current_date += timedelta(days=1)
+                
+                lock_data.extend(daily_locks)
+            
+            return pd.DataFrame(lock_data)
+                
+        except Exception as e:
+            logger.error(f"准备锁单数据时出错: {e}")
+            return pd.DataFrame()
+    
+    def prepare_lock_conversion_data(self, selected_vehicles: List[str], n_days: int = 30) -> pd.DataFrame:
+        """准备小订转化率数据"""
+        try:
+            conversion_data = []
+            
+            for vehicle in selected_vehicles:
+                if vehicle not in self.business_def:
+                    continue
+                    
+                vehicle_data = self.df[self.df['车型分组'] == vehicle].copy()
+                
+                # 获取预售周期内的累计小订数（分母）
+                start_date = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
+                end_date = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
+                
+                # 预售期内的小订数
+                presale_orders = vehicle_data[
+                    (pd.to_datetime(vehicle_data['Intention_Payment_Time']) >= start_date) &
+                    (pd.to_datetime(vehicle_data['Intention_Payment_Time']) <= end_date)
+                ]
+                total_presale_orders = len(presale_orders)
+                
+                # 计算锁单数（分子）：同时满足Lock_Time、Intention_Payment_Time、Intention_Payment_Time小于最大日期
+                lock_orders = vehicle_data[
+                    (vehicle_data['Lock_Time'].notna()) &
+                    (vehicle_data['Intention_Payment_Time'].notna()) &
+                    (pd.to_datetime(vehicle_data['Intention_Payment_Time']) <= end_date)
+                ]
+                
+                # 按Lock_Time分组计算累计转化率
+                if not lock_orders.empty:
+                    # 确保Lock_Time是datetime类型
+                    lock_orders = lock_orders.copy()
+                    lock_orders['Lock_Time'] = pd.to_datetime(lock_orders['Lock_Time'], errors='coerce')
+                    # 过滤掉无效日期
+                    lock_orders = lock_orders[lock_orders['Lock_Time'].notna()]
+                    if not lock_orders.empty:
+                        lock_orders['Lock_Date'] = lock_orders['Lock_Time'].dt.date
+                        daily_locks = lock_orders.groupby('Lock_Date').size().reset_index(name='daily_locks')
+                        daily_locks['cumulative_locks'] = daily_locks['daily_locks'].cumsum()
+                        
+                        # 计算转化率
+                        if total_presale_orders > 0:
+                            daily_locks['conversion_rate'] = (daily_locks['cumulative_locks'] / total_presale_orders) * 100
+                        else:
+                            daily_locks['conversion_rate'] = 0
+                        
+                        daily_locks['vehicle'] = vehicle
+                        
+                        # 计算从预售结束的天数
+                        daily_locks['days_from_end'] = daily_locks['Lock_Date'].apply(lambda x: self.calculate_days_from_end(vehicle, datetime.combine(x, datetime.min.time())))
+                        
+                        # 过滤掉负数天数（锁单时间在预售结束前的数据）和超过N天的数据
+                        daily_locks = daily_locks[
+                            (daily_locks['days_from_end'] >= 0) & 
+                            (daily_locks['days_from_end'] <= n_days)
+                        ]
+                        
+                        if not daily_locks.empty:
+                            conversion_data.append(daily_locks)
+            
+            if conversion_data:
+                result_df = pd.concat(conversion_data, ignore_index=True)
+                return result_df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"准备转化率数据时出错: {e}")
+            return pd.DataFrame()
+    
+    def create_cumulative_lock_chart(self, data: pd.DataFrame) -> go.Figure:
+        """创建累计锁单数对比图"""
+        fig = go.Figure()
+        
+        if data.empty:
+            fig.add_annotation(
+                text="暂无锁单数据",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=20, color="gray")
+            )
+            return fig
+        
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        
+        for i, vehicle in enumerate(data['vehicle'].unique()):
+            vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
+            
+            fig.add_trace(go.Scatter(
+                x=vehicle_data['days_from_end'],
+                y=vehicle_data['cumulative_locks'],
+                mode='lines+markers',
+                name=f'{vehicle}',
+                line=dict(color=colors[i % len(colors)], width=3),
+                marker=dict(size=6),
+                hovertemplate=f'<b>{vehicle}</b><br>' +
+                             '第%{x}日（预售结束当天为第0日）<br>' +
+                             '累计锁单数: %{y}<br>' +
+                             '<extra></extra>'
+            ))
+        
+        fig.update_layout(
+            title=dict(
+                text='累计锁单数对比图',
+                x=0.5,
+                font=dict(size=16, color='#2c3e50')
+            ),
+            xaxis=dict(
+                title='第N日',
+                gridcolor='lightgray',
+                showgrid=True
+            ),
+            yaxis=dict(
+                title='累计锁单数',
+                gridcolor='lightgray',
+                showgrid=True
+            ),
+            hovermode='x unified',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Arial, sans-serif", size=12, color="#2c3e50")
+        )
+        
+        return fig
+    
+    def create_lock_conversion_chart(self, data: pd.DataFrame) -> go.Figure:
+        """创建累计小订转化率对比图"""
+        fig = go.Figure()
+        
+        if data.empty:
+            fig.add_annotation(
+                text="暂无转化率数据",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=20, color="gray")
+            )
+            return fig
+        
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        
+        for i, vehicle in enumerate(data['vehicle'].unique()):
+            vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
+            
+            fig.add_trace(go.Scatter(
+                x=vehicle_data['days_from_end'],
+                y=vehicle_data['conversion_rate'],
+                mode='lines+markers',
+                name=f'{vehicle}',
+                line=dict(color=colors[i % len(colors)], width=3),
+                marker=dict(size=6),
+                hovertemplate=f'<b>{vehicle}</b><br>' +
+                             '第%{x}日（预售结束当天为第0日）<br>' +
+                             '转化率: %{y:.2f}%<br>' +
+                             '<extra></extra>'
+            ))
+        
+        fig.update_layout(
+            title=dict(
+                text='累计小订转化率对比图',
+                x=0.5,
+                font=dict(size=16, color='#2c3e50')
+            ),
+            xaxis=dict(
+                title='第N日',
+                gridcolor='lightgray',
+                showgrid=True
+            ),
+            yaxis=dict(
+                title='转化率 (%)',
+                gridcolor='lightgray',
+                showgrid=True
+            ),
+            hovermode='x unified',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Arial, sans-serif", size=12, color="#2c3e50")
+        )
+        
+        return fig
+    
+    def create_daily_lock_chart(self, data: pd.DataFrame) -> go.Figure:
+        """创建每日锁单数对比图"""
+        fig = go.Figure()
+        
+        if data.empty:
+            fig.add_annotation(
+                text="暂无每日锁单数据",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=20, color="gray")
+            )
+            return fig
+        
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        
+        for i, vehicle in enumerate(data['vehicle'].unique()):
+            vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
+            
+            fig.add_trace(go.Bar(
+                x=vehicle_data['days_from_end'],
+                y=vehicle_data['daily_locks'],
+                name=f'{vehicle}',
+                marker_color=colors[i % len(colors)],
+                opacity=0.8,
+                hovertemplate=f'<b>{vehicle}</b><br>' +
+                             '第%{x}日（预售结束当天为第0日）<br>' +
+                             '当日锁单数: %{y}<br>' +
+                             '<extra></extra>'
+            ))
+        
+        fig.update_layout(
+            title=dict(
+                text='每日锁单数对比图',
+                x=0.5,
+                font=dict(size=16, color='#2c3e50')
+            ),
+            xaxis=dict(
+                title='第N日',
+                gridcolor='lightgray',
+                showgrid=True
+            ),
+            yaxis=dict(
+                title='每日锁单数',
+                gridcolor='lightgray',
+                showgrid=True
+            ),
+            barmode='group',
+            hovermode='x unified',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Arial, sans-serif", size=12, color="#2c3e50")
+        )
+        
+        return fig
+    
+    def prepare_daily_lock_change_data(self, selected_vehicles: List[str], n_days: int = 30) -> pd.DataFrame:
+        """准备每日锁单数环比变化数据"""
+        try:
+            # 先获取基础锁单数据
+            lock_data = self.prepare_lock_data(selected_vehicles, n_days)
+            
+            if lock_data.empty:
+                return pd.DataFrame()
+            
+            change_data = []
+            
+            for vehicle in lock_data['vehicle'].unique():
+                vehicle_data = lock_data[lock_data['vehicle'] == vehicle].sort_values('days_from_end')
+                
+                # 计算环比变化率
+                vehicle_data = vehicle_data.copy()
+                vehicle_data['prev_daily_locks'] = vehicle_data['daily_locks'].shift(1)
+                vehicle_data['change_rate'] = ((vehicle_data['daily_locks'] - vehicle_data['prev_daily_locks']) / 
+                                             vehicle_data['prev_daily_locks'] * 100).fillna(0)
+                
+                # 处理无穷大值
+                vehicle_data['change_rate'] = vehicle_data['change_rate'].replace([np.inf, -np.inf], 0)
+                
+                change_data.append(vehicle_data)
+            
+            if change_data:
+                result_df = pd.concat(change_data, ignore_index=True)
+                return result_df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"准备每日锁单数环比变化数据时出错: {e}")
+            return pd.DataFrame()
+    
+    def create_daily_lock_change_chart(self, data: pd.DataFrame) -> go.Figure:
+        """创建每日锁单数环比变化图"""
+        fig = go.Figure()
+        
+        if data.empty:
+            fig.add_annotation(
+                text="暂无环比变化数据",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=20, color="gray")
+            )
+            return fig
+        
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        
+        for i, vehicle in enumerate(data['vehicle'].unique()):
+            vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
+            
+            # 过滤掉第一天（没有环比数据）
+            vehicle_data = vehicle_data[vehicle_data['days_from_end'] > 1]
+            
+            fig.add_trace(go.Scatter(
+                x=vehicle_data['days_from_end'],
+                y=vehicle_data['change_rate'],
+                mode='lines+markers',
+                name=f'{vehicle}',
+                line=dict(color=colors[i % len(colors)], width=3),
+                marker=dict(size=6),
+                hovertemplate=f'<b>{vehicle}</b><br>' +
+                             '第%{x}日（预售结束当天为第0日）<br>' +
+                             '环比变化: %{y:.1f}%<br>' +
+                             '<extra></extra>'
+            ))
+        
+        # 添加零线
+        fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
+        
+        fig.update_layout(
+            title=dict(
+                text='每日锁单数环比变化图',
+                x=0.5,
+                font=dict(size=16, color='#2c3e50')
+            ),
+            xaxis=dict(
+                title='第N日',
+                gridcolor='lightgray',
+                showgrid=True
+            ),
+            yaxis=dict(
+                title='环比变化率 (%)',
+                gridcolor='lightgray',
+                showgrid=True
+            ),
+            hovermode='x unified',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Arial, sans-serif", size=12, color="#2c3e50")
+        )
+        
+        return fig
 
 # 创建监控器实例
 monitor = OrderTrendMonitor()
@@ -1713,7 +2139,7 @@ def update_refund_charts(selected_vehicles, city_order_min=100, city_order_max=2
             )
             empty_df = pd.DataFrame({'提示': ['请选择车型']})
             return empty_fig, empty_fig, empty_fig, empty_df, empty_df, empty_df
-        
+
         # 准备退订相关数据
         refund_data = monitor.prepare_refund_data(selected_vehicles)
         refund_rate_data = monitor.prepare_refund_rate_data(selected_vehicles)
@@ -1732,7 +2158,9 @@ def update_refund_charts(selected_vehicles, city_order_min=100, city_order_max=2
         return cumulative_refund_chart, cumulative_refund_rate_chart, daily_refund_rate_chart, daily_refund_table, regional_summary_table, city_summary_table
         
     except Exception as e:
+        import traceback
         logger.error(f"退订图表更新失败: {str(e)}")
+        logger.error(f"错误详情: {traceback.format_exc()}")
         error_fig = go.Figure()
         error_fig.add_annotation(
             text=f"错误: {str(e)}",
@@ -1743,7 +2171,46 @@ def update_refund_charts(selected_vehicles, city_order_min=100, city_order_max=2
         error_df = pd.DataFrame({'错误': [str(e)]})
         return error_fig, error_fig, error_fig, error_df, error_df, error_df
 
-# 获取车型列表
+def update_lock_charts(selected_vehicles, n_days):
+    """更新锁单图表"""
+    try:
+        if not selected_vehicles:
+            empty_fig = go.Figure()
+            empty_fig.add_annotation(
+                text="请选择车型",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=20, color="gray")
+            )
+            return empty_fig, empty_fig, empty_fig, empty_fig
+
+        # 准备锁单相关数据
+        lock_data = monitor.prepare_lock_data(selected_vehicles, n_days)
+        conversion_data = monitor.prepare_lock_conversion_data(selected_vehicles, n_days)
+        change_data = monitor.prepare_daily_lock_change_data(selected_vehicles, n_days)
+        
+        # 创建图表
+        cumulative_lock_chart = monitor.create_cumulative_lock_chart(lock_data)
+        conversion_chart = monitor.create_lock_conversion_chart(conversion_data)
+        daily_lock_chart = monitor.create_daily_lock_chart(lock_data)
+        change_chart = monitor.create_daily_lock_change_chart(change_data)
+        
+        return cumulative_lock_chart, conversion_chart, daily_lock_chart, change_chart
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"锁单图表更新失败: {str(e)}")
+        logger.error(f"错误详情: {traceback.format_exc()}")
+        error_fig = go.Figure()
+        error_fig.add_annotation(
+            text=f"错误: {str(e)}",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16, color="red")
+        )
+        return error_fig, error_fig, error_fig, error_fig
+
+# 获取车型分组
 vehicle_groups = monitor.get_vehicle_groups()
 
 # 创建Gradio界面
@@ -1836,6 +2303,36 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                         wrap=True
                     )
         
+        # 锁单模块
+        with gr.Tab("🔒 锁单"):
+            with gr.Row():
+                lock_vehicle_selector = gr.CheckboxGroup(
+                    choices=vehicle_groups,
+                    label="选择车型分组",
+                    value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
+                    interactive=True
+                )
+                lock_n_days = gr.Number(
+                    label="N天数（基于business_definition.json最大值+N天）",
+                    value=30,
+                    minimum=1,
+                    maximum=100,
+                    step=1,
+                    info="输入N天数，用于计算X轴第N日"
+                )
+            
+            with gr.Row():
+                with gr.Column(scale=1):
+                    cumulative_lock_plot = gr.Plot(label="累计锁单数对比图")
+                with gr.Column(scale=1):
+                    lock_conversion_rate_plot = gr.Plot(label="累计小订转化率对比图")
+            
+            with gr.Row():
+                with gr.Column(scale=1):
+                    daily_lock_plot = gr.Plot(label="每日锁单数对比图")
+                with gr.Column(scale=1):
+                    daily_lock_change_plot = gr.Plot(label="每日锁单数环比变化图")
+        
         # 配置模块（占位）
         with gr.Tab("⚙️ 配置"):
             gr.Markdown("### 配置模块")
@@ -1915,6 +2412,19 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
     )
     
+    # 锁单模块事件绑定
+    lock_vehicle_selector.change(
+        fn=update_lock_charts,
+        inputs=[lock_vehicle_selector, lock_n_days],
+        outputs=[cumulative_lock_plot, lock_conversion_rate_plot, daily_lock_plot, daily_lock_change_plot]
+    )
+    
+    lock_n_days.change(
+        fn=update_lock_charts,
+        inputs=[lock_vehicle_selector, lock_n_days],
+        outputs=[cumulative_lock_plot, lock_conversion_rate_plot, daily_lock_plot, daily_lock_change_plot]
+    )
+    
     # 页面加载时自动更新
     demo.load(
         fn=update_charts,
@@ -1926,6 +2436,12 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         fn=update_refund_charts,
         inputs=[refund_vehicle_selector, city_order_min, city_order_max],
         outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
+    )
+    
+    demo.load(
+        fn=update_lock_charts,
+        inputs=[lock_vehicle_selector, lock_n_days],
+        outputs=[cumulative_lock_plot, lock_conversion_rate_plot, daily_lock_plot, daily_lock_change_plot]
     )
     
     # 界面加载时初始化预测模块
