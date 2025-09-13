@@ -941,39 +941,135 @@ class OrderTrendMonitor:
         
         return fig
     
-    def create_daily_change_table(self, data: pd.DataFrame) -> pd.DataFrame:
-        """创建订单的日变化表格"""
+    def create_daily_change_table(self, data: pd.DataFrame, days_after_launch: int = 1) -> pd.DataFrame:
+        """创建订单的日变化表格 - 车型对比格式，严格按顺序排列并高亮较大值"""
         if data.empty:
             return pd.DataFrame({'提示': ['暂无数据']})
+        
+        # 获取所有车型和天数
+        vehicles = sorted(data['车型分组'].unique())
+        if len(vehicles) == 0:
+            return pd.DataFrame({'提示': ['暂无数据']})
+        
+        # 获取所有天数的并集
+        all_days = set()
+        for vehicle in vehicles:
+            vehicle_data = data[data['车型分组'] == vehicle]
+            all_days.update(vehicle_data['days_from_start'].tolist())
+        all_days = sorted(list(all_days))
         
         # 准备表格数据
         table_data = []
         
-        for vehicle in data['车型分组'].unique():
-            vehicle_data = data[data['车型分组'] == vehicle].sort_values('days_from_start')
-            
-            for _, row in vehicle_data.iterrows():
-                # 环比变化emoji标记
-                if pd.isna(row['daily_change_rate']):
-                    change_emoji = "➖"
-                    change_text = "N/A"
-                elif row['daily_change_rate'] > 0:
-                    change_emoji = "📈"
-                    change_text = f"+{row['daily_change_rate']:.1f}%"
-                elif row['daily_change_rate'] < 0:
-                    change_emoji = "📉"
-                    change_text = f"{row['daily_change_rate']:.1f}%"
-                else:
-                    change_emoji = "➖"
-                    change_text = "0.0%"
+        for day in all_days:
+            # 收集当前行的所有数据
+            day_data = {}
+            for vehicle in vehicles:
+                vehicle_data = data[
+                    (data['车型分组'] == vehicle) & 
+                    (data['days_from_start'] == day)
+                ]
                 
-                table_data.append({
-                    '车型': vehicle,
-                    '第N日': int(row['days_from_start']),
-                    '小订数': int(row['daily_orders']),
-                    '累计小订数': int(row['cumulative_orders']),
-                    '日环比变化': f"{change_emoji} {change_text}"
-                })
+                if not vehicle_data.empty:
+                    row = vehicle_data.iloc[0]
+                    
+                    # 计算小订留存锁单数和转化率
+                    if vehicle in self.business_def:
+                        start_date = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
+                        end_date = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
+                        target_date = start_date + timedelta(days=int(day) - 1)
+                        
+                        # 获取当日的小订订单
+                        daily_orders_data = self.df[
+                            (self.df['车型分组'] == vehicle) & 
+                            (self.df['Intention_Payment_Time'].dt.date == target_date.date())
+                        ]
+                        
+                        # 计算小订留存锁单数：同时含有Lock_Time、Intention_Payment_Time，且Lock_Time < 发布会结束日期+N日
+                        lock_cutoff_date = end_date + timedelta(days=days_after_launch)
+                        lock_orders = daily_orders_data[
+                            (daily_orders_data['Lock_Time'].notna()) & 
+                            (daily_orders_data['Intention_Payment_Time'].notna()) & 
+                            (daily_orders_data['Lock_Time'] < pd.Timestamp(lock_cutoff_date))
+                        ]
+                        
+                        lock_count = len(lock_orders)
+                        total_count = len(daily_orders_data)
+                        conversion_rate = (lock_count / total_count * 100) if total_count > 0 else 0
+                    else:
+                        lock_count = 0
+                        conversion_rate = 0
+                    
+                    day_data[vehicle] = {
+                        'daily_orders': int(row['daily_orders']),
+                        'cumulative_orders': int(row['cumulative_orders']),
+                        'lock_count': lock_count,
+                        'conversion_rate': conversion_rate
+                    }
+                else:
+                    day_data[vehicle] = {
+                        'daily_orders': None,
+                        'cumulative_orders': None,
+                        'lock_count': None,
+                        'conversion_rate': None
+                    }
+            
+            # 按照严格顺序构建行数据
+            row_data = {'第N日': int(day)}
+            
+            # 1. 小订数对比
+            daily_values = [day_data[v]['daily_orders'] for v in vehicles if day_data[v]['daily_orders'] is not None]
+            max_daily = max(daily_values) if daily_values else None
+            for vehicle in vehicles:
+                value = day_data[vehicle]['daily_orders']
+                if value is not None:
+                    if max_daily and value == max_daily and len([v for v in daily_values if v == max_daily]) == 1:
+                        row_data[f'{vehicle}小订数'] = f"<span style='color: red;'>{value}</span>"
+                    else:
+                        row_data[f'{vehicle}小订数'] = str(value)
+                else:
+                    row_data[f'{vehicle}小订数'] = '-'
+            
+            # 2. 累计小订数对比
+            cumulative_values = [day_data[v]['cumulative_orders'] for v in vehicles if day_data[v]['cumulative_orders'] is not None]
+            max_cumulative = max(cumulative_values) if cumulative_values else None
+            for vehicle in vehicles:
+                value = day_data[vehicle]['cumulative_orders']
+                if value is not None:
+                    if max_cumulative and value == max_cumulative and len([v for v in cumulative_values if v == max_cumulative]) == 1:
+                        row_data[f'{vehicle}累计小订数'] = f"<span style='color: red;'>{value}</span>"
+                    else:
+                        row_data[f'{vehicle}累计小订数'] = str(value)
+                else:
+                    row_data[f'{vehicle}累计小订数'] = '-'
+            
+            # 3. 发布会后N日锁单数对比
+            lock_values = [day_data[v]['lock_count'] for v in vehicles if day_data[v]['lock_count'] is not None]
+            max_lock = max(lock_values) if lock_values else None
+            for vehicle in vehicles:
+                value = day_data[vehicle]['lock_count']
+                if value is not None:
+                    if max_lock and value == max_lock and len([v for v in lock_values if v == max_lock]) == 1:
+                        row_data[f'{vehicle}发布会后{days_after_launch}日锁单数'] = f"<span style='color: red;'>{value}</span>"
+                    else:
+                        row_data[f'{vehicle}发布会后{days_after_launch}日锁单数'] = str(value)
+                else:
+                    row_data[f'{vehicle}发布会后{days_after_launch}日锁单数'] = '-'
+            
+            # 4. 小订转化率对比
+            conversion_values = [day_data[v]['conversion_rate'] for v in vehicles if day_data[v]['conversion_rate'] is not None]
+            max_conversion = max(conversion_values) if conversion_values else None
+            for vehicle in vehicles:
+                value = day_data[vehicle]['conversion_rate']
+                if value is not None:
+                    if max_conversion and value == max_conversion and len([v for v in conversion_values if v == max_conversion]) == 1:
+                        row_data[f'{vehicle}小订转化率(%)'] = f"<span style='color: red;'>{value:.1f}%</span>"
+                    else:
+                        row_data[f'{vehicle}小订转化率(%)'] = f"{value:.1f}%"
+                else:
+                    row_data[f'{vehicle}小订转化率(%)'] = '-'
+            
+            table_data.append(row_data)
         
         return pd.DataFrame(table_data)
     
@@ -2043,7 +2139,7 @@ class OrderTrendMonitor:
             vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
             
             # 过滤掉第一天（没有环比数据）
-            vehicle_data = vehicle_data[vehicle_data['days_from_end'] > 1]
+            vehicle_data = vehicle_data[vehicle_data['days_from_end'] > 0]
             
             fig.add_trace(go.Scatter(
                 x=vehicle_data['days_from_end'],
@@ -2084,11 +2180,149 @@ class OrderTrendMonitor:
         )
         
         return fig
+    
+    def prepare_lock_performance_table_data(self, selected_vehicles: List[str], n_days: int = 30) -> pd.DataFrame:
+        """准备锁单表现表格数据"""
+        try:
+            if self.df.empty:
+                return pd.DataFrame()
+            
+            # 获取车型的最大日期（预售结束日期）
+            vehicle_max_dates = {}
+            for vehicle in selected_vehicles:
+                if vehicle in self.business_def:
+                    vehicle_max_dates[vehicle] = datetime.strptime(
+                        self.business_def[vehicle]['end'], '%Y-%m-%d'
+                    ).date()
+            
+            result_data = []
+            
+            # 为每一天（0到N日）计算各种锁单数
+            for day in range(n_days + 1):
+                day_data = {'第N日': day}
+                
+                for vehicle in selected_vehicles:
+                    if vehicle not in vehicle_max_dates:
+                        continue
+                        
+                    vehicle_data = self.df[self.df['车型分组'] == vehicle].copy()
+                    if vehicle_data.empty:
+                        continue
+                    
+                    max_date = vehicle_max_dates[vehicle]
+                    target_date = max_date + timedelta(days=day)
+                    
+                    # 筛选该日期的锁单数据
+                    day_lock_data = vehicle_data[
+                        (vehicle_data['Lock_Time'].notna()) &
+                        (pd.to_datetime(vehicle_data['Lock_Time']).dt.date == target_date)
+                    ]
+                    
+                    # 计算各种锁单数
+                    daily_locks = len(day_lock_data)
+                    
+                    # 小订留存锁单数：Lock_Time和Intention_Payment_Time都非空，且Intention_Payment_Time < max_date
+                    retained_locks = len(day_lock_data[
+                        (day_lock_data['Intention_Payment_Time'].notna()) &
+                        (pd.to_datetime(day_lock_data['Intention_Payment_Time']).dt.date < max_date)
+                    ])
+                    
+                    # 发布会后小订锁单数：Lock_Time和Intention_Payment_Time都非空，且Intention_Payment_Time >= max_date
+                    post_launch_locks = len(day_lock_data[
+                        (day_lock_data['Intention_Payment_Time'].notna()) &
+                        (pd.to_datetime(day_lock_data['Intention_Payment_Time']).dt.date >= max_date)
+                    ])
+                    
+                    # 直接锁单数：含有Lock_Time但没有Intention_Payment_Time的订单数
+                    direct_locks = len(day_lock_data[
+                        day_lock_data['Intention_Payment_Time'].isna()
+                    ])
+                    
+                    # 验证数据一致性：三个分类的合计应该等于当日锁单总数
+                    total_classified = retained_locks + post_launch_locks + direct_locks
+                    if total_classified != daily_locks:
+                        logger.warning(f"第{day}日 {vehicle} 锁单分类不一致: 总数{daily_locks}, 分类合计{total_classified}")
+                        logger.warning(f"  小订留存: {retained_locks}, 发布会后: {post_launch_locks}, 直接: {direct_locks}")
+                    
+                    # 累计锁单数（从第0日到当前日）
+                    cumulative_data = vehicle_data[
+                        (vehicle_data['Lock_Time'].notna()) &
+                        (pd.to_datetime(vehicle_data['Lock_Time']).dt.date >= max_date) &
+                        (pd.to_datetime(vehicle_data['Lock_Time']).dt.date <= target_date)
+                    ]
+                    cumulative_locks = len(cumulative_data)
+                    
+                    # 按新的表头顺序组织数据
+                    day_data[f'{vehicle}锁单数'] = daily_locks
+                    day_data[f'{vehicle}累计锁单数'] = cumulative_locks
+                    day_data[f'{vehicle}锁单结构'] = f"{retained_locks}/{post_launch_locks}/{direct_locks}"
+                
+                result_data.append(day_data)
+            
+            if result_data:
+                df = pd.DataFrame(result_data)
+                return df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"准备锁单表现表格数据时出错: {e}")
+            return pd.DataFrame()
+    
+    def create_lock_performance_table(self, data: pd.DataFrame) -> pd.DataFrame:
+        """创建锁单表现表格"""
+        if data.empty:
+            return pd.DataFrame({'提示': ['暂无锁单数据']})
+        
+        try:
+            # 按第N日排序
+            data_sorted = data.sort_values('第N日')
+            
+            # 获取所有车型
+            vehicles = []
+            for col in data.columns:
+                if '锁单数' in col and '累计' not in col:
+                    vehicle = col.replace('锁单数', '')
+                    if vehicle not in vehicles:
+                        vehicles.append(vehicle)
+            
+            # 按照指定顺序重新组织表格结构
+            table_data = []
+            
+            for _, row in data_sorted.iterrows():
+                table_row = {'第N日': f"第{row['第N日']}日"}
+                
+                # 按照用户要求的列顺序添加数据
+                for vehicle in vehicles:
+                    # 车型锁单数
+                    daily_col = f'{vehicle}锁单数'
+                    if daily_col in row.index:
+                        table_row[f'{vehicle}锁单数'] = int(row[daily_col]) if pd.notna(row[daily_col]) else 0
+                
+                for vehicle in vehicles:
+                    # 车型累计锁单数
+                    cumulative_col = f'{vehicle}累计锁单数'
+                    if cumulative_col in row.index:
+                        table_row[f'{vehicle}累计锁单数'] = int(row[cumulative_col]) if pd.notna(row[cumulative_col]) else 0
+                
+                for vehicle in vehicles:
+                    # 车型锁单结构
+                    structure_col = f'{vehicle}锁单结构'
+                    if structure_col in row.index:
+                        table_row[f'{vehicle}锁单结构'] = str(row[structure_col]) if pd.notna(row[structure_col]) else "0/0/0"
+                
+                table_data.append(table_row)
+            
+            return pd.DataFrame(table_data)
+            
+        except Exception as e:
+            logger.error(f"创建锁单表现表格时出错: {e}")
+            return pd.DataFrame({'错误': [f'表格生成失败: {str(e)}']})
 
 # 创建监控器实例
 monitor = OrderTrendMonitor()
 
-def update_charts(selected_vehicles):
+def update_charts(selected_vehicles, days_after_launch=1):
     """更新订单图表"""
     try:
         if not selected_vehicles:
@@ -2110,7 +2344,7 @@ def update_charts(selected_vehicles):
         cumulative_chart = monitor.create_cumulative_chart(daily_data)
         daily_chart = monitor.create_daily_chart(daily_data)
         change_trend_chart = monitor.create_change_trend_chart(daily_data)
-        daily_table = monitor.create_daily_change_table(daily_data)
+        daily_table = monitor.create_daily_change_table(daily_data, days_after_launch)
         
         return cumulative_chart, daily_chart, change_trend_chart, daily_table
         
@@ -2210,6 +2444,26 @@ def update_lock_charts(selected_vehicles, n_days):
         )
         return error_fig, error_fig, error_fig, error_fig
 
+def update_lock_performance_table(selected_vehicles, n_days):
+    """更新锁单表现表格"""
+    try:
+        if not selected_vehicles:
+            return pd.DataFrame({'提示': ['请选择车型']})
+        
+        # 准备锁单表现数据
+        performance_data = monitor.prepare_lock_performance_table_data(selected_vehicles, n_days)
+        
+        # 创建表格
+        performance_table = monitor.create_lock_performance_table(performance_data)
+        
+        return performance_table
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"锁单表现表格更新失败: {str(e)}")
+        logger.error(f"错误详情: {traceback.format_exc()}")
+        return pd.DataFrame({'错误': [f'表格更新失败: {str(e)}']})
+
 # 获取车型分组
 vehicle_groups = monitor.get_vehicle_groups()
 
@@ -2239,11 +2493,23 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                 with gr.Column(scale=1):
                     change_trend_plot = gr.Plot(label="每日小订单数环比变化趋势图")
                 with gr.Column(scale=1):
-                    daily_table = gr.DataFrame(
-                        label="订单日变化表格",
-                        interactive=False,
-                        wrap=True
-                    )
+                    with gr.Row():
+                        days_after_launch = gr.Number(
+                            label="发布会后第N日",
+                            value=1,
+                            minimum=0,
+                            maximum=30,
+                            step=1,
+                            info="计算小订转化率的时间点（0表示发布会当天）"
+                        )
+            
+            with gr.Row():
+                daily_table = gr.DataFrame(
+                    label="订单日变化表格",
+                    interactive=False,
+                    wrap=True,
+                    datatype=["str", "html", "html", "html", "html", "html", "html", "html", "html"]
+                )
         
         # 退订模块
         with gr.Tab("🔄 退订"):
@@ -2332,6 +2598,14 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                     daily_lock_plot = gr.Plot(label="每日锁单数对比图")
                 with gr.Column(scale=1):
                     daily_lock_change_plot = gr.Plot(label="每日锁单数环比变化图")
+            
+            with gr.Row():
+                with gr.Accordion("📊 锁单表现表格", open=False):
+                    lock_performance_table = gr.DataFrame(
+                        label="锁单表现表格",
+                        interactive=False,
+                        wrap=True
+                    )
         
         # 配置模块（占位）
         with gr.Tab("⚙️ 配置"):
@@ -2390,7 +2664,13 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
     # 绑定事件
     vehicle_selector.change(
         fn=update_charts,
-        inputs=[vehicle_selector],
+        inputs=[vehicle_selector, days_after_launch],
+        outputs=[cumulative_plot, daily_plot, change_trend_plot, daily_table]
+    )
+    
+    days_after_launch.change(
+        fn=update_charts,
+        inputs=[vehicle_selector, days_after_launch],
         outputs=[cumulative_plot, daily_plot, change_trend_plot, daily_table]
     )
     
@@ -2425,10 +2705,23 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         outputs=[cumulative_lock_plot, lock_conversion_rate_plot, daily_lock_plot, daily_lock_change_plot]
     )
     
+    # 锁单表现表格事件绑定
+    lock_vehicle_selector.change(
+        fn=update_lock_performance_table,
+        inputs=[lock_vehicle_selector, lock_n_days],
+        outputs=[lock_performance_table]
+    )
+    
+    lock_n_days.change(
+        fn=update_lock_performance_table,
+        inputs=[lock_vehicle_selector, lock_n_days],
+        outputs=[lock_performance_table]
+    )
+    
     # 页面加载时自动更新
     demo.load(
         fn=update_charts,
-        inputs=[vehicle_selector],
+        inputs=[vehicle_selector, days_after_launch],
         outputs=[cumulative_plot, daily_plot, change_trend_plot, daily_table]
     )
     
@@ -2444,10 +2737,17 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         outputs=[cumulative_lock_plot, lock_conversion_rate_plot, daily_lock_plot, daily_lock_change_plot]
     )
     
+    demo.load(
+        fn=update_lock_performance_table,
+        inputs=[lock_vehicle_selector, lock_n_days],
+        outputs=[lock_performance_table]
+    )
+    
     # 界面加载时初始化预测模块
     def init_prediction():
         predictor.train_models()
-        return predict_orders(28)
+        fig, result_text = predict_orders(28)
+        return fig, result_text
     
     demo.load(
         fn=init_prediction,

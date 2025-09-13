@@ -609,12 +609,12 @@ class ABComparisonAnalyzer:
         try:
             def analyze_sample_time_intervals(sample_df):
                 if len(sample_df) == 0:
-                    return {'payment_to_refund': {}, 'payment_to_assign': {}}
+                    return {'payment_to_refund': {}, 'payment_to_assign': {}, 'payment_to_lock': {}}
                 
                 sample_df = sample_df.copy()
                 
                 # 确保时间列为datetime类型
-                time_columns = ['Intention_Payment_Time', 'intention_refund_time', 'first_assign_time']
+                time_columns = ['Intention_Payment_Time', 'intention_refund_time', 'first_assign_time', 'Lock_Time']
                 for col in time_columns:
                     if col in sample_df.columns:
                         sample_df[col] = pd.to_datetime(sample_df[col], errors='coerce')
@@ -649,9 +649,25 @@ class ABComparisonAnalyzer:
                                 'std': float(intervals.std()) if len(intervals) > 1 else 0.0
                             }
                 
+                # 计算支付到锁单（lock time）的时间间隔
+                payment_to_lock_stats = {}
+                if 'Lock_Time' in sample_df.columns:
+                    valid_lock_mask = sample_df['Lock_Time'].notna() & sample_df['Intention_Payment_Time'].notna()
+                    if valid_lock_mask.any():
+                        intervals = (sample_df.loc[valid_lock_mask, 'Lock_Time'] - 
+                                   sample_df.loc[valid_lock_mask, 'Intention_Payment_Time']).dt.days
+                        if len(intervals) > 0:
+                            payment_to_lock_stats = {
+                                'count': len(intervals),
+                                'mean': float(intervals.mean()),
+                                'median': float(intervals.median()),
+                                'std': float(intervals.std()) if len(intervals) > 1 else 0.0
+                            }
+                
                 return {
                     'payment_to_refund': payment_to_refund_stats,
-                    'payment_to_assign': payment_to_assign_stats
+                    'payment_to_assign': payment_to_assign_stats,
+                    'payment_to_lock': payment_to_lock_stats
                 }
             
             # 分析两个样本
@@ -891,6 +907,32 @@ class ABComparisonAnalyzer:
                     '样本A': f"{assign_a.get('median', 0):.1f}",
                     '样本B': f"{assign_b.get('median', 0):.1f}",
                     '差异': f"{assign_a.get('median', 0) - assign_b.get('median', 0):+.1f}"
+                })
+            
+            # 支付到锁单时间间隔
+            lock_a = sample_a_result.get('payment_to_lock', {})
+            lock_b = sample_b_result.get('payment_to_lock', {})
+            
+            if lock_a and lock_b:
+                time_interval_data.append({
+                    '时间间隔类型': '支付到锁单-样本数',
+                    '样本A': f"{lock_a.get('count', 0):,}",
+                    '样本B': f"{lock_b.get('count', 0):,}",
+                    '差异': f"{lock_a.get('count', 0) - lock_b.get('count', 0):+,}"
+                })
+                
+                time_interval_data.append({
+                    '时间间隔类型': '支付到锁单-平均天数',
+                    '样本A': f"{lock_a.get('mean', 0):.1f}",
+                    '样本B': f"{lock_b.get('mean', 0):.1f}",
+                    '差异': f"{lock_a.get('mean', 0) - lock_b.get('mean', 0):+.1f}"
+                })
+                
+                time_interval_data.append({
+                    '时间间隔类型': '支付到锁单-中位数天数',
+                    '样本A': f"{lock_a.get('median', 0):.1f}",
+                    '样本B': f"{lock_b.get('median', 0):.1f}",
+                    '差异': f"{lock_a.get('median', 0) - lock_b.get('median', 0):+.1f}"
                 })
         
         if not time_interval_data:

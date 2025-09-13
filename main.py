@@ -1760,22 +1760,31 @@ def generate_post_launch_lock_analysis(vehicle_data, presale_periods):
             cm2_lock_data = cm2_data[cm2_data['Lock_Time'].notna()].copy()
             
             if not cm2_lock_data.empty:
-                max_lock_time = cm2_lock_data['Lock_Time'].max()
-                cm2_n_days = (max_lock_time - cm2_max_date).days
+                # 计算第N日：N = (当前时间戳-1天) - CM2的end日期
+                from datetime import datetime, timedelta
+                current_timestamp = datetime.now()
+                target_date = current_timestamp - timedelta(days=1)
+                cm2_n_days = (target_date - cm2_max_date.to_pydatetime()).days
                 
-                # CM2锁单数（含有Lock_Time的订单数）
-                cm2_lock_count = len(cm2_lock_data)
+                # 计算目标锁单日期：CM2的end日期 + N天
+                target_lock_date = cm2_max_date + pd.Timedelta(days=cm2_n_days)
                 
-                # CM2小订留存锁单数（同时含有Lock_Time、Intention_Payment_Time且Intention_Payment_Time小于最大日期）
-                cm2_small_retention = cm2_lock_data[
-                    (cm2_lock_data['Intention_Payment_Time'].notna()) & 
-                    (cm2_lock_data['Intention_Payment_Time'] < cm2_max_date)
+                # CM2锁单数（Lock_Time等于目标锁单日期的当日订单数）
+                cm2_daily_lock_data = cm2_lock_data[
+                    cm2_lock_data['Lock_Time'].dt.date == target_lock_date.date()
+                ]
+                cm2_lock_count = len(cm2_daily_lock_data)
+                
+                # CM2小订留存锁单数（当日锁单中同时含有Intention_Payment_Time且Intention_Payment_Time小于最大日期）
+                cm2_small_retention = cm2_daily_lock_data[
+                    (cm2_daily_lock_data['Intention_Payment_Time'].notna()) & 
+                    (cm2_daily_lock_data['Intention_Payment_Time'] < cm2_max_date)
                 ]
                 cm2_small_retention_count = len(cm2_small_retention)
                 
                 analysis_data['cm2_lock_orders'] = {
                     'n_days': cm2_n_days,
-                    'max_lock_time': max_lock_time.strftime('%Y-%m-%d'),
+                    'max_lock_time': target_lock_date.strftime('%Y-%m-%d'),
                     'lock_orders_count': cm2_lock_count
                 }
                 
@@ -1795,8 +1804,8 @@ def generate_post_launch_lock_analysis(vehicle_data, presale_periods):
             vehicle_data_copy = vehicle_data[vehicle].copy()
             vehicle_max_date = max_dates[vehicle]
             
-            # 计算该车型对应的目标日期：最大日期 + (N-1)
-            target_date = vehicle_max_date + pd.Timedelta(days=cm2_n_days-1)
+            # 计算该车型对应的目标日期：最大日期 + N
+            target_date = vehicle_max_date + pd.Timedelta(days=cm2_n_days)
             
             # 获取有Lock_Time的订单，并筛选Lock_Time等于目标日期的订单
             vehicle_lock_data = vehicle_data_copy[
@@ -1825,33 +1834,77 @@ def generate_post_launch_lock_analysis(vehicle_data, presale_periods):
                 'small_retention_count': vehicle_small_retention_count
             }
     
-    # 计算累计数据（按车型分别统计）
+    # 计算累计数据（从第0日到第N日的真正累计值）
     cumulative_lock_by_vehicle = {}
     cumulative_small_by_vehicle = {}
     total_lock_orders = 0
     total_small_retention = 0
     
-    # CM2累计
-    if 'lock_orders_count' in analysis_data['cm2_lock_orders']:
-        cm2_lock_count = analysis_data['cm2_lock_orders']['lock_orders_count']
-        cumulative_lock_by_vehicle['CM2'] = cm2_lock_count
-        total_lock_orders += cm2_lock_count
+    # CM2累计（从第0日到第N日）
+    if cm2_n_days is not None and cm2_data is not None and len(cm2_data) > 0:
+        cm2_max_date = max_dates.get('CM2')
+        if cm2_max_date is not None:
+            cm2_lock_data = cm2_data[cm2_data['Lock_Time'].notna()].copy()
+            if not cm2_lock_data.empty:
+                # 计算从第0日到第N日的累计锁单数
+                start_date = cm2_max_date  # 第0日
+                end_date = cm2_max_date + pd.Timedelta(days=cm2_n_days)  # 第N日
+                
+                # 累计锁单数：Lock_Time在第0日到第N日之间的所有订单
+                cm2_cumulative_lock_data = cm2_lock_data[
+                    (cm2_lock_data['Lock_Time'].dt.date >= start_date.date()) &
+                    (cm2_lock_data['Lock_Time'].dt.date <= end_date.date())
+                ]
+                cm2_cumulative_lock_count = len(cm2_cumulative_lock_data)
+                
+                # 累计小订留存锁单数
+                cm2_cumulative_small_retention = cm2_cumulative_lock_data[
+                    (cm2_cumulative_lock_data['Intention_Payment_Time'].notna()) & 
+                    (cm2_cumulative_lock_data['Intention_Payment_Time'] < cm2_max_date)
+                ]
+                cm2_cumulative_small_count = len(cm2_cumulative_small_retention)
+                
+                cumulative_lock_by_vehicle['CM2'] = cm2_cumulative_lock_count
+                cumulative_small_by_vehicle['CM2'] = cm2_cumulative_small_count
+                total_lock_orders += cm2_cumulative_lock_count
+                total_small_retention += cm2_cumulative_small_count
     
-    if 'small_retention_count' in analysis_data['cm2_small_order_retention']:
-        cm2_small_count = analysis_data['cm2_small_order_retention']['small_retention_count']
-        cumulative_small_by_vehicle['CM2'] = cm2_small_count
-        total_small_retention += cm2_small_count
-    
-    # 其他车型累计
-    for vehicle, vehicle_data_item in analysis_data['other_vehicles_lock_orders'].items():
-        lock_count = vehicle_data_item['lock_orders_count']
-        cumulative_lock_by_vehicle[vehicle] = lock_count
-        total_lock_orders += lock_count
-    
-    for vehicle, vehicle_data_item in analysis_data['other_vehicles_small_order_retention'].items():
-        small_count = vehicle_data_item['small_retention_count']
-        cumulative_small_by_vehicle[vehicle] = small_count
-        total_small_retention += small_count
+    # 其他车型累计（从第0日到第N日）
+    if cm2_n_days is not None:
+        for vehicle in ['CM0', 'CM1', 'DM0', 'DM1']:
+            if vehicle not in vehicle_data or len(vehicle_data[vehicle]) == 0:
+                continue
+            if vehicle not in max_dates:
+                continue
+                
+            vehicle_data_copy = vehicle_data[vehicle].copy()
+            vehicle_max_date = max_dates[vehicle]
+            
+            # 计算从第0日到第N日的累计锁单数
+            start_date = vehicle_max_date  # 第0日
+            end_date = vehicle_max_date + pd.Timedelta(days=cm2_n_days)  # 第N日
+            
+            # 获取有Lock_Time的订单，并筛选Lock_Time在第0日到第N日之间的订单
+            vehicle_cumulative_lock_data = vehicle_data_copy[
+                (vehicle_data_copy['Lock_Time'].notna()) & 
+                (vehicle_data_copy['Lock_Time'].dt.date >= start_date.date()) &
+                (vehicle_data_copy['Lock_Time'].dt.date <= end_date.date())
+            ].copy()
+            
+            # 累计锁单数
+            vehicle_cumulative_lock_count = len(vehicle_cumulative_lock_data)
+            
+            # 累计小订留存锁单数
+            vehicle_cumulative_small_retention = vehicle_cumulative_lock_data[
+                (vehicle_cumulative_lock_data['Intention_Payment_Time'].notna()) & 
+                (vehicle_cumulative_lock_data['Intention_Payment_Time'] < vehicle_max_date)
+            ]
+            vehicle_cumulative_small_count = len(vehicle_cumulative_small_retention)
+            
+            cumulative_lock_by_vehicle[vehicle] = vehicle_cumulative_lock_count
+            cumulative_small_by_vehicle[vehicle] = vehicle_cumulative_small_count
+            total_lock_orders += vehicle_cumulative_lock_count
+            total_small_retention += vehicle_cumulative_small_count
     
     analysis_data['cumulative_lock_orders'] = {
         'total_count': total_lock_orders,
