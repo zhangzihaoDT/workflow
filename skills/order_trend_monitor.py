@@ -1287,6 +1287,81 @@ class OrderTrendMonitor:
         
         return pd.DataFrame(table_data)
     
+    def prepare_summary_statistics_data(self, selected_vehicles: List[str], days_after_launch: int = 1) -> pd.DataFrame:
+        """创建汇总统计表格数据"""
+        if not selected_vehicles:
+            return pd.DataFrame({'提示': ['请选择车型']})
+        
+        summary_data = []
+        
+        for vehicle in selected_vehicles:
+            if vehicle not in self.business_def:
+                continue
+                
+            # 获取车型的预售时间定义
+            start_date = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
+            end_date = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
+            
+            # 计算累计预售天数（从开始到结束）
+            total_presale_days = (end_date - start_date).days + 1
+            
+            # 获取该车型的所有小订数据
+            vehicle_orders = self.df[
+                (self.df['车型分组'] == vehicle) & 
+                (self.df['Intention_Payment_Time'].notna())
+            ]
+            
+            # 计算累计到预售结束为止的累计预售小订数
+            presale_orders = vehicle_orders[
+                vehicle_orders['Intention_Payment_Time'].dt.date <= end_date.date()
+            ]
+            total_presale_orders = len(presale_orders)
+            
+            # 计算发布会后N日内的所有锁单数据
+            lock_cutoff_date = end_date + timedelta(days=days_after_launch)
+            vehicle_all_data = self.df[self.df['车型分组'] == vehicle].copy()
+            lock_data_in_period = vehicle_all_data[
+                (vehicle_all_data['Lock_Time'].notna()) &
+                (pd.to_datetime(vehicle_all_data['Lock_Time']).dt.date >= end_date.date()) &
+                (pd.to_datetime(vehicle_all_data['Lock_Time']).dt.date <= lock_cutoff_date.date())
+            ]
+            
+            # 小订留存锁单数：Lock_Time和Intention_Payment_Time都非空，且Intention_Payment_Time < end_date
+            retained_locks = len(lock_data_in_period[
+                (lock_data_in_period['Intention_Payment_Time'].notna()) &
+                (pd.to_datetime(lock_data_in_period['Intention_Payment_Time']).dt.date < end_date.date())
+            ])
+            
+            # 发布会后小订锁单数：Lock_Time和Intention_Payment_Time都非空，且Intention_Payment_Time >= end_date
+            post_launch_locks = len(lock_data_in_period[
+                (lock_data_in_period['Intention_Payment_Time'].notna()) &
+                (pd.to_datetime(lock_data_in_period['Intention_Payment_Time']).dt.date >= end_date.date())
+            ])
+            
+            # 直接锁单数：含有Lock_Time但没有Intention_Payment_Time的订单数
+            direct_locks = len(lock_data_in_period[
+                lock_data_in_period['Intention_Payment_Time'].isna()
+            ])
+            
+            # 发布会后N日累计锁单数应该等于三个锁单数的总和
+            total_lock_orders = retained_locks + post_launch_locks + direct_locks
+            
+            # 计算小订转化率（小订留存锁单数 / 累计预售小订数）
+            conversion_rate = (retained_locks / total_presale_orders * 100) if total_presale_orders > 0 else 0
+            
+            summary_data.append({
+                '车型': vehicle,
+                '累计预售天数': total_presale_days,
+                '累计预售小订数': total_presale_orders,
+                f'发布会后{days_after_launch}日累计锁单数': total_lock_orders,
+                '小订留存锁单数': retained_locks,
+                '发布会后小订锁单数': post_launch_locks,
+                '直接锁单数': direct_locks,
+                '小订转化率(%)': round(conversion_rate, 2)
+            })
+        
+        return pd.DataFrame(summary_data)
+    
     def prepare_refund_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
         """准备退订数据"""
         if not selected_vehicles:
@@ -3497,7 +3572,7 @@ def update_charts(selected_vehicles, days_after_launch=1):
                 font=dict(size=20, color="gray")
             )
             empty_df = pd.DataFrame({'提示': ['请选择车型']})
-            return empty_fig, empty_fig, empty_fig, empty_fig, empty_df
+            return empty_fig, empty_fig, empty_fig, empty_fig, empty_df, empty_df
         
         # 准备数据
         daily_data = monitor.prepare_daily_data(selected_vehicles)
@@ -3507,9 +3582,10 @@ def update_charts(selected_vehicles, days_after_launch=1):
         daily_chart = monitor.create_daily_chart(daily_data)
         change_trend_chart = monitor.create_change_trend_chart(daily_data)
         conversion_rate_chart = monitor.create_conversion_rate_chart(selected_vehicles, days_after_launch)
+        summary_statistics_table = monitor.prepare_summary_statistics_data(selected_vehicles, days_after_launch)
         daily_table = monitor.create_daily_change_table(daily_data, days_after_launch)
         
-        return cumulative_chart, daily_chart, change_trend_chart, conversion_rate_chart, daily_table
+        return cumulative_chart, daily_chart, change_trend_chart, conversion_rate_chart, summary_statistics_table, daily_table
         
     except Exception as e:
         logger.error(f"图表更新失败: {str(e)}")
@@ -3521,7 +3597,7 @@ def update_charts(selected_vehicles, days_after_launch=1):
             font=dict(size=16, color="red")
         )
         error_df = pd.DataFrame({'错误': [str(e)]})
-        return error_fig, error_fig, error_fig, error_fig, error_df
+        return error_fig, error_fig, error_fig, error_fig, error_df, error_df
 
 def update_refund_charts(selected_vehicles, city_order_min=100, city_order_max=2000):
     """更新退订图表"""
@@ -3687,12 +3763,22 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         # 订单模块
         with gr.Tab("📊 订单"):
             with gr.Row():
-                vehicle_selector = gr.CheckboxGroup(
-                    choices=vehicle_groups,
-                    label="选择车型分组",
-                    value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
-                    interactive=True
-                )
+                with gr.Column(scale=1):
+                    vehicle_selector = gr.CheckboxGroup(
+                        choices=vehicle_groups,
+                        label="选择车型分组",
+                        value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
+                        interactive=True
+                    )
+                with gr.Column(scale=1):
+                    days_after_launch = gr.Number(
+                        label="发布会后第N日",
+                        value=6,
+                        minimum=0,
+                        maximum=30,
+                        step=1,
+                        info="计算小订转化率的时间点（1表示发布会当天）"
+                    )
             
             with gr.Row():
                 with gr.Column(scale=1):
@@ -3703,21 +3789,16 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
             with gr.Row():
                 with gr.Column(scale=1):
                     change_trend_plot = gr.Plot(label="每日小订单数环比变化趋势图")
-
-            
-            with gr.Row():
-                with gr.Column(scale=1):
-                    with gr.Row():
-                        days_after_launch = gr.Number(
-                            label="发布会后第N日",
-                            value=6,
-                            minimum=0,
-                            maximum=30,
-                            step=1,
-                            info="计算小订转化率的时间点（1表示发布会当天）"
-                        )
                 with gr.Column(scale=1):
                     conversion_rate_plot = gr.Plot(label="车型小订转化率对比图")
+           
+            with gr.Row():
+                summary_statistics_table = gr.DataFrame(
+                    label="汇总统计表格",
+                    interactive=False,
+                    wrap=True,
+                    datatype=["str", "number", "number", "number", "number", "number", "number", "number"]  # 车型(str) + 累计预售天数(number) + 累计预售小订数(number) + 发布会后N日累计锁单数(number) + 小订留存锁单数(number) + 发布会后小订锁单数(number) + 直接锁单数(number) + 小订转化率(number)
+                )
             
             with gr.Row():
                 daily_table = gr.DataFrame(
@@ -4001,13 +4082,13 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
     vehicle_selector.change(
         fn=update_charts,
         inputs=[vehicle_selector, days_after_launch],
-        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, daily_table]
+        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, summary_statistics_table, daily_table]
     )
     
     days_after_launch.change(
         fn=update_charts,
         inputs=[vehicle_selector, days_after_launch],
-        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, daily_table]
+        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, summary_statistics_table, daily_table]
     )
     
     refund_vehicle_selector.change(
@@ -4065,7 +4146,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
     demo.load(
         fn=update_charts,
         inputs=[vehicle_selector, days_after_launch],
-        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, daily_table]
+        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, summary_statistics_table, daily_table]
     )
     
     demo.load(
