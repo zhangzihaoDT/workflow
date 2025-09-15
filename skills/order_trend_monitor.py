@@ -37,7 +37,13 @@ def get_dynamic_vehicle_data(vehicle_name: str) -> pd.DataFrame:
         # 加载数据和业务定义
         df = pd.read_parquet(DATA_PATH)
         with open(BUSINESS_DEF_PATH, 'r', encoding='utf-8') as f:
-            business_def = json.load(f)
+            business_data = json.load(f)
+        
+        # 适配新的JSON结构
+        if 'time_periods' in business_data:
+            business_def = business_data['time_periods']
+        else:
+            business_def = business_data
         
         if vehicle_name not in business_def:
             logger.warning(f"车型 {vehicle_name} 不在业务定义中")
@@ -691,6 +697,7 @@ class OrderTrendMonitor:
     def __init__(self):
         self.df = None
         self.business_def = None
+        self.vehicle_prices = {}
         self.load_data()
         self.load_business_definition()
     
@@ -714,11 +721,36 @@ class OrderTrendMonitor:
         """加载业务定义"""
         try:
             with open(BUSINESS_DEF_PATH, 'r', encoding='utf-8') as f:
-                self.business_def = json.load(f)
+                business_data = json.load(f)
+            
+            # 适配新的JSON结构
+            if 'time_periods' in business_data:
+                self.business_def = business_data['time_periods']
+                self.vehicle_prices = business_data.get('vehicle_prices', {})
+            else:
+                # 兼容旧格式
+                self.business_def = business_data
+                self.vehicle_prices = {}
+            
             logger.info("业务定义加载成功")
         except Exception as e:
             logger.error(f"业务定义加载失败: {str(e)}")
             raise
+    
+    def get_vehicle_price(self, product_name: str) -> str:
+        """根据Product Name获取对应的价格"""
+        try:
+            if product_name in self.vehicle_prices:
+                price = self.vehicle_prices[product_name]
+                if price and price != 0:
+                    return f"{price:,.0f}"
+                else:
+                    return "暂无价格"
+            else:
+                return "暂无价格"
+        except Exception as e:
+            logger.error(f"获取价格时出错: {e}")
+            return "暂无价格"
     
     def get_vehicle_groups(self) -> List[str]:
         """获取车型分组列表"""
@@ -941,6 +973,188 @@ class OrderTrendMonitor:
         
         return fig
     
+    def prepare_conversion_rate_data(self, selected_vehicles: List[str], days_after_launch: int = 1) -> pd.DataFrame:
+        """准备小订转化率数据用于对比折线图"""
+        try:
+            conversion_data = []
+            
+            for vehicle in selected_vehicles:
+                if vehicle not in self.business_def:
+                    continue
+                    
+                vehicle_data = self.df[self.df['车型分组'] == vehicle].copy()
+                if vehicle_data.empty:
+                    continue
+                
+                # 获取预售周期
+                start_date = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
+                end_date = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
+                max_days = (end_date - start_date).days + 1
+                
+                # 按日期分组统计订单数
+                daily_orders = vehicle_data.groupby(vehicle_data['Intention_Payment_Time'].dt.date).size().reset_index()
+                daily_orders.columns = ['date', 'daily_orders']
+                daily_orders['date'] = pd.to_datetime(daily_orders['date'])
+                
+                # 计算从预售开始的天数
+                daily_orders['days_from_start'] = daily_orders['date'].apply(
+                    lambda x: self.calculate_days_from_start(vehicle, x.to_pydatetime())
+                )
+                
+                # 过滤有效天数
+                daily_orders = daily_orders[
+                    (daily_orders['days_from_start'] >= 1) & 
+                    (daily_orders['days_from_start'] <= max_days)
+                ]
+                
+                # 计算每日的小订转化率
+                lock_cutoff_date = end_date + timedelta(days=days_after_launch)
+                
+                for _, row in daily_orders.iterrows():
+                    day_num = row['days_from_start']
+                    target_date = start_date + timedelta(days=int(day_num) - 1)
+                    
+                    # 获取当日的小订订单
+                    daily_orders_data = self.df[
+                        (self.df['车型分组'] == vehicle) & 
+                        (self.df['Intention_Payment_Time'].dt.date == target_date.date())
+                    ]
+                    
+                    # 计算小订留存锁单数
+                    lock_orders = daily_orders_data[
+                        (daily_orders_data['Lock_Time'].notna()) & 
+                        (daily_orders_data['Intention_Payment_Time'].notna()) & 
+                        (daily_orders_data['Lock_Time'] < pd.Timestamp(lock_cutoff_date))
+                    ]
+                    
+                    lock_count = len(lock_orders)
+                    total_count = len(daily_orders_data)
+                    conversion_rate = (lock_count / total_count * 100) if total_count > 0 else 0
+                    
+                    conversion_data.append({
+                        '车型分组': vehicle,
+                        'days_from_start': day_num,
+                        'conversion_rate': conversion_rate,
+                        'lock_count': lock_count,
+                        'total_count': total_count
+                    })
+            
+            return pd.DataFrame(conversion_data)
+            
+        except Exception as e:
+            logger.error(f"准备转化率数据时出错: {str(e)}")
+            return pd.DataFrame()
+
+    def create_conversion_rate_chart(self, selected_vehicles: List[str], days_after_launch: int = 1) -> go.Figure:
+        """创建车型小订转化率对比折线图"""
+        try:
+            # 获取转化率数据
+            conversion_data = self.prepare_conversion_rate_data(selected_vehicles, days_after_launch)
+            
+            if conversion_data.empty:
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="暂无转化率数据",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.5, xanchor='center', yanchor='middle',
+                    showarrow=False, font=dict(size=16)
+                )
+                fig.update_layout(
+                    title="车型小订转化率对比",
+                    xaxis_title="预售天数",
+                    yaxis_title="转化率 (%)",
+                    height=400
+                )
+                return fig
+            
+            fig = go.Figure()
+            
+            # 为每个车型添加折线
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
+            
+            for i, vehicle in enumerate(selected_vehicles):
+                vehicle_data = conversion_data[conversion_data['车型分组'] == vehicle]
+                
+                if not vehicle_data.empty:
+                    # 按天数排序
+                    vehicle_data = vehicle_data.sort_values('days_from_start')
+                    
+                    # 创建悬停文本
+                    hover_text = [
+                        f"车型: {vehicle}<br>" +
+                        f"预售第{int(row['days_from_start'])}天<br>" +
+                        f"转化率: {row['conversion_rate']:.2f}%<br>" +
+                        f"锁单数: {int(row['lock_count'])}<br>" +
+                        f"小订数: {int(row['total_count'])}"
+                        for _, row in vehicle_data.iterrows()
+                    ]
+                    
+                    fig.add_trace(go.Scatter(
+                        x=vehicle_data['days_from_start'],
+                        y=vehicle_data['conversion_rate'],
+                        mode='lines+markers',
+                        name=vehicle,
+                        line=dict(color=colors[i % len(colors)], width=2),
+                        marker=dict(size=6),
+                        hovertemplate='%{hovertext}<extra></extra>',
+                        hovertext=hover_text
+                    ))
+            
+            # 更新布局
+            fig.update_layout(
+                title={
+                    'text': f"车型小订转化率对比 (预售结束后{days_after_launch}天内锁单)",
+                    'x': 0.5,
+                    'xanchor': 'center'
+                },
+                xaxis_title="预售天数",
+                yaxis_title="转化率 (%)",
+                height=400,
+                hovermode='closest',
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                ),
+                margin=dict(t=80, b=50, l=50, r=50),
+                plot_bgcolor='white',
+                paper_bgcolor='white'
+            )
+            
+            # 设置网格
+            fig.update_xaxes(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='lightgray',
+                zeroline=True
+            )
+            fig.update_yaxes(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='lightgray',
+                zeroline=True,
+                range=[0, 50]
+            )
+            
+            return fig
+            
+        except Exception as e:
+            logger.error(f"创建转化率图表时出错: {str(e)}")
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"图表生成失败: {str(e)}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, xanchor='center', yanchor='middle',
+                showarrow=False, font=dict(size=14, color='red')
+            )
+            fig.update_layout(
+                title="车型小订转化率对比",
+                height=400
+            )
+            return fig
+
     def create_daily_change_table(self, data: pd.DataFrame, days_after_launch: int = 1) -> pd.DataFrame:
         """创建订单的日变化表格 - 车型对比格式，严格按顺序排列并高亮较大值"""
         if data.empty:
@@ -1831,13 +2045,15 @@ class OrderTrendMonitor:
                     # 计算从预售结束的天数（第N日）
                     days_from_end = self.calculate_days_from_end(vehicle, current_date)
                     
-                    daily_locks.append({
-                        'vehicle': vehicle,
-                        'date': current_date,
-                        'days_from_end': days_from_end,
-                        'daily_locks': daily_lock_count,
-                        'cumulative_locks': cumulative_locks
-                    })
+                    # 只保留有实际锁单发生的日期点
+                    if daily_lock_count > 0:
+                        daily_locks.append({
+                            'vehicle': vehicle,
+                            'date': current_date,
+                            'days_from_end': days_from_end,
+                            'daily_locks': daily_lock_count,
+                            'cumulative_locks': cumulative_locks
+                        })
                     
                     current_date += timedelta(days=1)
                 
@@ -1938,18 +2154,27 @@ class OrderTrendMonitor:
         for i, vehicle in enumerate(data['vehicle'].unique()):
             vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
             
-            fig.add_trace(go.Scatter(
-                x=vehicle_data['days_from_end'],
-                y=vehicle_data['cumulative_locks'],
-                mode='lines+markers',
-                name=f'{vehicle}',
-                line=dict(color=colors[i % len(colors)], width=3),
-                marker=dict(size=6),
-                hovertemplate=f'<b>{vehicle}</b><br>' +
-                             '第%{x}日（预售结束当天为第0日）<br>' +
-                             '累计锁单数: %{y}<br>' +
-                             '<extra></extra>'
-            ))
+            # 过滤掉累计锁单数为0的数据点，避免绘制无意义的折线
+            vehicle_data = vehicle_data[vehicle_data['cumulative_locks'] > 0]
+            
+            if not vehicle_data.empty:
+                # 进一步优化：只显示有实际锁单发生的关键节点
+                # 找到第一个有锁单的日期作为起点
+                first_lock_day = vehicle_data['days_from_end'].min()
+                vehicle_data = vehicle_data[vehicle_data['days_from_end'] >= first_lock_day]
+                
+                fig.add_trace(go.Scatter(
+                    x=vehicle_data['days_from_end'],
+                    y=vehicle_data['cumulative_locks'],
+                    mode='lines+markers',
+                    name=f'{vehicle}',
+                    line=dict(color=colors[i % len(colors)], width=3),
+                    marker=dict(size=6),
+                    hovertemplate=f'<b>{vehicle}</b><br>' +
+                                 '第%{x}日（预售结束当天为第0日）<br>' +
+                                 '累计锁单数: %{y}<br>' +
+                                 '<extra></extra>'
+                ))
         
         fig.update_layout(
             title=dict(
@@ -2141,18 +2366,22 @@ class OrderTrendMonitor:
             # 过滤掉第一天（没有环比数据）
             vehicle_data = vehicle_data[vehicle_data['days_from_end'] > 0]
             
-            fig.add_trace(go.Scatter(
-                x=vehicle_data['days_from_end'],
-                y=vehicle_data['change_rate'],
-                mode='lines+markers',
-                name=f'{vehicle}',
-                line=dict(color=colors[i % len(colors)], width=3),
-                marker=dict(size=6),
-                hovertemplate=f'<b>{vehicle}</b><br>' +
-                             '第%{x}日（预售结束当天为第0日）<br>' +
-                             '环比变化: %{y:.1f}%<br>' +
-                             '<extra></extra>'
-            ))
+            # 过滤掉每日锁单数为0的数据点，避免绘制无意义的折线
+            vehicle_data = vehicle_data[vehicle_data['daily_locks'] > 0]
+            
+            if not vehicle_data.empty:
+                fig.add_trace(go.Scatter(
+                    x=vehicle_data['days_from_end'],
+                    y=vehicle_data['change_rate'],
+                    mode='lines+markers',
+                    name=f'{vehicle}',
+                    line=dict(color=colors[i % len(colors)], width=3),
+                    marker=dict(size=6),
+                    hovertemplate=f'<b>{vehicle}</b><br>' +
+                                 '第%{x}日（预售结束当天为第0日）<br>' +
+                                 '环比变化: %{y:.1f}%<br>' +
+                                 '<extra></extra>'
+                ))
         
         # 添加零线
         fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
@@ -2180,6 +2409,939 @@ class OrderTrendMonitor:
         )
         
         return fig
+    
+    def prepare_product_name_lock_data(self, selected_vehicles: List[str], start_date: str = '', end_date: str = '', 
+                                     product_types: List[str] = None, lock_start_date: str = '', lock_end_date: str = '', lock_n_days: int = 30) -> pd.DataFrame:
+        """准备Product Name锁单统计数据（支持多种筛选条件）"""
+        try:
+            if self.df.empty:
+                return pd.DataFrame()
+            
+            # 基础筛选：车型分组
+            filtered_data = self.df[self.df['车型分组'].isin(selected_vehicles)].copy()
+            
+            if filtered_data.empty:
+                return pd.DataFrame()
+            
+            # 小订时间范围筛选（基于Intention_Payment_Time）
+            if start_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] >= start_date]
+            if end_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] <= end_date]
+            
+            # 锁单时间范围筛选（基于Lock_Time）
+            if lock_start_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] >= lock_start_date]
+            if lock_end_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] <= lock_end_date]
+            
+            # 基于锁单后N天的筛选（基于business_definition.json最大值+N天）
+            if lock_n_days and 'Lock_Time' in filtered_data.columns and hasattr(self, 'business_def'):
+                for vehicle in selected_vehicles:
+                    if vehicle in self.business_def:
+                        # 计算该车型的预售结束日期 + N天
+                        end_date_str = self.business_def[vehicle]['end']
+                        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+                        max_lock_date = end_date + timedelta(days=lock_n_days)
+                        
+                        # 筛选该车型在指定时间范围内的锁单数据
+                        vehicle_mask = (filtered_data['车型分组'] == vehicle) & (filtered_data['Lock_Time'] <= max_lock_date.strftime('%Y-%m-%d'))
+                        if vehicle == selected_vehicles[0]:  # 第一个车型，直接赋值
+                            time_filtered_data = filtered_data[vehicle_mask]
+                        else:  # 后续车型，合并数据
+                            time_filtered_data = pd.concat([time_filtered_data, filtered_data[vehicle_mask]], ignore_index=True)
+                
+                if 'time_filtered_data' in locals():
+                    filtered_data = time_filtered_data
+            
+            # 产品分类筛选
+            if product_types and 'Product Name' in filtered_data.columns:
+                product_mask = pd.Series([False] * len(filtered_data), index=filtered_data.index)
+                
+                for category in product_types:
+                    if category == "增程":
+                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        category_mask = (
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    elif category == "纯电":
+                        # 其他产品为纯电
+                        category_mask = ~(
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    else:
+                        continue
+                    
+                    product_mask = product_mask | category_mask
+                
+                filtered_data = filtered_data[product_mask]
+            
+
+            
+            # 最终筛选：只保留有锁单数据的记录用于统计
+            if 'Lock_Time' in filtered_data.columns:
+                lock_data = filtered_data[filtered_data['Lock_Time'].notna()].copy()
+            else:
+                return pd.DataFrame()
+            
+            if lock_data.empty:
+                return pd.DataFrame()
+            
+            # 按车型分组和Product Name统计锁单数
+            result_data = []
+            
+            for vehicle in selected_vehicles:
+                vehicle_data = lock_data[lock_data['车型分组'] == vehicle]
+                if vehicle_data.empty:
+                    continue
+                
+                # 统计该车型的总锁单数
+                total_locks = len(vehicle_data)
+                
+                # 按Product Name分组统计
+                product_stats = vehicle_data.groupby('Product Name').size().reset_index(name='锁单数')
+                product_stats['车型'] = vehicle
+                product_stats['锁单占比(%)'] = (product_stats['锁单数'] / total_locks * 100).round(2)
+                
+                result_data.append(product_stats)
+            
+            if result_data:
+                final_df = pd.concat(result_data, ignore_index=True)
+                # 按车型和锁单数排序
+                final_df = final_df.sort_values(['车型', '锁单数'], ascending=[True, False])
+                return final_df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"准备Product Name锁单数据时出错: {e}")
+            return pd.DataFrame()
+    
+    def prepare_channel_lock_data(self, selected_vehicles: List[str], start_date: str = '', end_date: str = '', 
+                                product_types: List[str] = None, lock_start_date: str = '', lock_end_date: str = '', lock_n_days: int = 30) -> pd.DataFrame:
+        """准备中间渠道锁单统计数据（支持多种筛选条件）"""
+        try:
+            if self.df.empty:
+                return pd.DataFrame()
+            
+            # 基础筛选：车型分组
+            filtered_data = self.df[self.df['车型分组'].isin(selected_vehicles)].copy()
+            
+            if filtered_data.empty:
+                return pd.DataFrame()
+            
+            # 小订时间范围筛选（基于Intention_Payment_Time）
+            if start_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] >= start_date]
+            if end_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] <= end_date]
+            
+            # 锁单时间范围筛选（基于Lock_Time）
+            if lock_start_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] >= lock_start_date]
+            if lock_end_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] <= lock_end_date]
+            
+            # 基于锁单后N天的筛选（基于business_definition.json最大值+N天）
+            if lock_n_days and 'Lock_Time' in filtered_data.columns and hasattr(self, 'business_def'):
+                for vehicle in selected_vehicles:
+                    if vehicle in self.business_def:
+                        # 计算该车型的预售结束日期 + N天
+                        end_date_str = self.business_def[vehicle]['end']
+                        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+                        max_lock_date = end_date + timedelta(days=lock_n_days)
+                        
+                        # 筛选该车型在指定时间范围内的锁单数据
+                        vehicle_mask = (filtered_data['车型分组'] == vehicle) & (filtered_data['Lock_Time'] <= max_lock_date.strftime('%Y-%m-%d'))
+                        if vehicle == selected_vehicles[0]:  # 第一个车型，直接赋值
+                            time_filtered_data = filtered_data[vehicle_mask]
+                        else:  # 后续车型，合并数据
+                            time_filtered_data = pd.concat([time_filtered_data, filtered_data[vehicle_mask]], ignore_index=True)
+                
+                if 'time_filtered_data' in locals():
+                    filtered_data = time_filtered_data
+            
+            # 产品分类筛选
+            if product_types and 'Product Name' in filtered_data.columns:
+                product_mask = pd.Series([False] * len(filtered_data), index=filtered_data.index)
+                
+                for category in product_types:
+                    if category == "增程":
+                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        category_mask = (
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    elif category == "纯电":
+                        # 其他产品为纯电
+                        category_mask = ~(
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    else:
+                        continue
+                    
+                    product_mask = product_mask | category_mask
+                
+                filtered_data = filtered_data[product_mask]
+            
+            # 最终筛选：只保留有锁单数据的记录用于统计
+            if 'Lock_Time' in filtered_data.columns:
+                lock_data = filtered_data[filtered_data['Lock_Time'].notna()].copy()
+            else:
+                return pd.DataFrame()
+            
+            if lock_data.empty:
+                return pd.DataFrame()
+            
+            # 按渠道分组统计各车型的锁单数，调整为车型对比格式
+            if 'first_middle_channel_name' not in lock_data.columns:
+                return pd.DataFrame()
+            
+            # 获取所有渠道
+            all_channels = lock_data['first_middle_channel_name'].dropna().unique()
+            
+            # 构建车型对比表格数据
+            result_data = []
+            
+            for channel in all_channels:
+                channel_data = lock_data[lock_data['first_middle_channel_name'] == channel]
+                
+                row_data = {'渠道名称': channel if pd.notna(channel) else '未知渠道'}
+                
+                # 为每个车型统计锁单数和占比
+                for vehicle in selected_vehicles:
+                    vehicle_channel_data = channel_data[channel_data['车型分组'] == vehicle]
+                    vehicle_total_data = lock_data[lock_data['车型分组'] == vehicle]
+                    
+                    lock_count = len(vehicle_channel_data)
+                    total_count = len(vehicle_total_data)
+                    lock_ratio = (lock_count / total_count * 100) if total_count > 0 else 0
+                    
+                    row_data[f'{vehicle}锁单数'] = lock_count
+                    row_data[f'{vehicle}锁单占比'] = round(lock_ratio, 2)
+                
+                result_data.append(row_data)
+            
+            if result_data:
+                final_df = pd.DataFrame(result_data)
+                # 按第一个车型的锁单数排序
+                if selected_vehicles:
+                    sort_column = f'{selected_vehicles[0]}锁单数'
+                    final_df = final_df.sort_values(sort_column, ascending=False)
+                return final_df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"准备中间渠道锁单数据时出错: {e}")
+            return pd.DataFrame()
+
+    def create_product_name_lock_table(self, data: pd.DataFrame) -> pd.DataFrame:
+        """创建Product Name锁单统计表格"""
+        if data.empty:
+            return pd.DataFrame({'提示': ['暂无锁单数据']})
+        
+        try:
+            # 重新组织表格格式
+            table_data = []
+            
+            for _, row in data.iterrows():
+                product_name = row['Product Name']
+                price = self.get_vehicle_price(product_name)
+                
+                table_row = {
+                    '车型': row['车型'],
+                    'Product Name': product_name,
+                    '价格': price,
+                    '锁单数': f"{int(row['锁单数']):,}",
+                    '锁单占比': f"{row['锁单占比(%)']}%"
+                }
+                table_data.append(table_row)
+            
+            return pd.DataFrame(table_data)
+            
+        except Exception as e:
+            logger.error(f"创建Product Name锁单表格时出错: {e}")
+            return pd.DataFrame({'错误': [f'表格生成失败: {str(e)}']})
+
+    def create_channel_lock_table(self, data: pd.DataFrame) -> pd.DataFrame:
+        """创建中间渠道锁单统计表格（车型对比格式）"""
+        if data.empty:
+            return pd.DataFrame({'提示': ['暂无锁单数据']})
+        
+        try:
+            # 重新组织表格格式，实现车型对比和高亮功能
+            table_data = []
+            
+            for _, row in data.iterrows():
+                channel_name = row['渠道名称']
+                
+                # 构建基础行数据
+                table_row = {'渠道名称': channel_name}
+                
+                # 获取所有车型相关的列
+                vehicle_columns = [col for col in data.columns if col.endswith('锁单数') or col.endswith('锁单占比')]
+                
+                # 分别处理锁单数和锁单占比的高亮
+                lock_count_columns = [col for col in vehicle_columns if col.endswith('锁单数')]
+                lock_ratio_columns = [col for col in vehicle_columns if col.endswith('锁单占比')]
+                
+                # 找出锁单数最大值
+                if lock_count_columns:
+                    lock_count_values = [row[col] for col in lock_count_columns]
+                    max_lock_count = max(lock_count_values) if lock_count_values else 0
+                
+                # 找出锁单占比最大值
+                if lock_ratio_columns:
+                    lock_ratio_values = [row[col] for col in lock_ratio_columns]
+                    max_lock_ratio = max(lock_ratio_values) if lock_ratio_values else 0
+                
+                # 添加车型数据，对最大值进行高亮
+                for col in vehicle_columns:
+                    value = row[col]
+                    if col.endswith('锁单数'):
+                        formatted_value = f"{int(value):,}"
+                        # 如果是最大值且大于0，添加红色高亮
+                        if value == max_lock_count and value > 0 and len(lock_count_columns) > 1:
+                            formatted_value = f'<span style="color: red; font-weight: bold;">{formatted_value}</span>'
+                        table_row[col] = formatted_value
+                    elif col.endswith('锁单占比'):
+                        formatted_value = f"{value}%"
+                        # 如果是最大值且大于0，添加红色高亮
+                        if value == max_lock_ratio and value > 0 and len(lock_ratio_columns) > 1:
+                            formatted_value = f'<span style="color: red; font-weight: bold;">{formatted_value}</span>'
+                        table_row[col] = formatted_value
+                
+                table_data.append(table_row)
+            
+            return pd.DataFrame(table_data)
+            
+        except Exception as e:
+            logger.error(f"创建中间渠道锁单表格时出错: {e}")
+            return pd.DataFrame({'错误': [f'表格生成失败: {str(e)}']})
+
+    def prepare_age_lock_data(self, selected_vehicles: List[str], start_date: str = '', end_date: str = '', 
+                            product_types: List[str] = None, lock_start_date: str = '', lock_end_date: str = '', lock_n_days: int = 30, include_unknown: bool = True) -> pd.DataFrame:
+        """准备买家年龄锁单统计数据（支持多种筛选条件）"""
+        try:
+            if self.df.empty:
+                return pd.DataFrame()
+            
+            # 基础筛选：车型分组
+            filtered_data = self.df[self.df['车型分组'].isin(selected_vehicles)].copy()
+            
+            if filtered_data.empty:
+                return pd.DataFrame()
+            
+            # 小订时间范围筛选（基于Intention_Payment_Time）
+            if start_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] >= start_date]
+            if end_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] <= end_date]
+            
+            # 锁单时间范围筛选（基于Lock_Time）
+            if lock_start_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] >= lock_start_date]
+            if lock_end_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] <= lock_end_date]
+            
+            # 基于锁单后N天的筛选（基于business_definition.json最大值+N天）
+            if lock_n_days and 'Lock_Time' in filtered_data.columns and hasattr(self, 'business_def'):
+                for vehicle in selected_vehicles:
+                    if vehicle in self.business_def:
+                        # 计算该车型的预售结束日期 + N天
+                        end_date_str = self.business_def[vehicle]['end']
+                        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+                        max_lock_date = end_date + timedelta(days=lock_n_days)
+                        
+                        # 筛选该车型在指定时间范围内的锁单数据
+                        vehicle_mask = (filtered_data['车型分组'] == vehicle) & (filtered_data['Lock_Time'] <= max_lock_date.strftime('%Y-%m-%d'))
+                        if vehicle == selected_vehicles[0]:  # 第一个车型，直接赋值
+                            time_filtered_data = filtered_data[vehicle_mask]
+                        else:  # 后续车型，合并数据
+                            time_filtered_data = pd.concat([time_filtered_data, filtered_data[vehicle_mask]], ignore_index=True)
+                
+                if 'time_filtered_data' in locals():
+                    filtered_data = time_filtered_data
+            
+            # 产品分类筛选
+            if product_types and 'Product Name' in filtered_data.columns:
+                product_mask = pd.Series([False] * len(filtered_data), index=filtered_data.index)
+                
+                for category in product_types:
+                    if category == "增程":
+                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        category_mask = (
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    elif category == "纯电":
+                        # 其他产品为纯电
+                        category_mask = ~(
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    else:
+                        continue
+                    
+                    product_mask = product_mask | category_mask
+                
+                filtered_data = filtered_data[product_mask]
+            
+            # 最终筛选：只保留有锁单数据的记录用于统计
+            if 'Lock_Time' in filtered_data.columns:
+                lock_data = filtered_data[filtered_data['Lock_Time'].notna()].copy()
+            else:
+                return pd.DataFrame()
+            
+            if lock_data.empty:
+                return pd.DataFrame()
+            
+            # 按年龄段分组统计各车型的锁单数，调整为车型对比格式
+            if 'buyer_age' not in lock_data.columns:
+                return pd.DataFrame()
+            
+            # 创建年龄段分类函数
+            def categorize_age(age):
+                if pd.isna(age):
+                    return '未知年龄'
+                age = int(age)
+                if age < 25:
+                    return '25岁以下'
+                elif age < 30:
+                    return '25-29岁'
+                elif age < 35:
+                    return '30-34岁'
+                elif age < 40:
+                    return '35-39岁'
+                elif age < 45:
+                    return '40-44岁'
+                elif age < 50:
+                    return '45-49岁'
+                elif age < 55:
+                    return '50-54岁'
+                else:
+                    return '55岁以上'
+            
+            # 为所有数据添加年龄段
+            lock_data['年龄段'] = lock_data['buyer_age'].apply(categorize_age)
+            
+            # 根据include_unknown参数过滤未知年龄数据
+            if not include_unknown:
+                lock_data = lock_data[lock_data['年龄段'] != '未知年龄']
+            
+            # 获取所有年龄段
+            all_age_groups = lock_data['年龄段'].dropna().unique()
+            
+            # 构建车型对比表格数据
+            result_data = []
+            
+            for age_group in all_age_groups:
+                age_data = lock_data[lock_data['年龄段'] == age_group]
+                
+                row_data = {'年龄段': age_group}
+                
+                # 为每个车型统计锁单数和占比
+                for vehicle in selected_vehicles:
+                    vehicle_age_data = age_data[age_data['车型分组'] == vehicle]
+                    vehicle_total_data = lock_data[lock_data['车型分组'] == vehicle]
+                    
+                    lock_count = len(vehicle_age_data)
+                    total_count = len(vehicle_total_data)
+                    lock_ratio = (lock_count / total_count * 100) if total_count > 0 else 0
+                    
+                    row_data[f'{vehicle}锁单数'] = lock_count
+                    row_data[f'{vehicle}锁单占比'] = round(lock_ratio, 2)
+                
+                result_data.append(row_data)
+            
+            if result_data:
+                final_df = pd.DataFrame(result_data)
+                # 按第一个车型的锁单数排序
+                if selected_vehicles:
+                    sort_column = f'{selected_vehicles[0]}锁单数'
+                    final_df = final_df.sort_values(sort_column, ascending=False)
+                return final_df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"准备买家年龄锁单数据时出错: {e}")
+            return pd.DataFrame()
+
+    def create_age_lock_table(self, data: pd.DataFrame) -> pd.DataFrame:
+        """创建买家年龄锁单统计表格（车型对比格式）"""
+        if data.empty:
+            return pd.DataFrame({'提示': ['暂无锁单数据']})
+        
+        try:
+            # 重新组织表格格式，实现车型对比和高亮功能
+            table_data = []
+            
+            for _, row in data.iterrows():
+                age_group = row['年龄段']
+                
+                # 构建基础行数据
+                table_row = {'年龄段': age_group}
+                
+                # 获取所有车型相关的列
+                vehicle_columns = [col for col in data.columns if col.endswith('锁单数') or col.endswith('锁单占比')]
+                
+                # 分别处理锁单数和锁单占比的高亮
+                lock_count_columns = [col for col in vehicle_columns if col.endswith('锁单数')]
+                lock_ratio_columns = [col for col in vehicle_columns if col.endswith('锁单占比')]
+                
+                # 找出锁单数最大值
+                if lock_count_columns:
+                    lock_count_values = [row[col] for col in lock_count_columns]
+                    max_lock_count = max(lock_count_values) if lock_count_values else 0
+                
+                # 找出锁单占比最大值
+                if lock_ratio_columns:
+                    lock_ratio_values = [row[col] for col in lock_ratio_columns]
+                    max_lock_ratio = max(lock_ratio_values) if lock_ratio_values else 0
+                
+                # 添加车型数据，对最大值进行高亮
+                for col in vehicle_columns:
+                    value = row[col]
+                    if col.endswith('锁单数'):
+                        formatted_value = f"{int(value):,}"
+                        # 如果是最大值且大于0，添加红色高亮
+                        if value == max_lock_count and value > 0 and len(lock_count_columns) > 1:
+                            formatted_value = f'<span style="color: red; font-weight: bold;">{formatted_value}</span>'
+                        table_row[col] = formatted_value
+                    elif col.endswith('锁单占比'):
+                        formatted_value = f"{value}%"
+                        # 如果是最大值且大于0，添加红色高亮
+                        if value == max_lock_ratio and value > 0 and len(lock_ratio_columns) > 1:
+                            formatted_value = f'<span style="color: red; font-weight: bold;">{formatted_value}</span>'
+                        table_row[col] = formatted_value
+                
+                table_data.append(table_row)
+            
+            return pd.DataFrame(table_data)
+            
+        except Exception as e:
+            logger.error(f"创建买家年龄锁单表格时出错: {e}")
+            return pd.DataFrame({'错误': [f'表格生成失败: {str(e)}']})
+
+    def prepare_gender_lock_data(self, selected_vehicles: List[str], start_date: str = '', end_date: str = '', 
+                               product_types: List[str] = None, lock_start_date: str = '', lock_end_date: str = '', lock_n_days: int = 30, include_unknown: bool = True) -> pd.DataFrame:
+        """准备订单性别锁单统计数据（支持多种筛选条件）"""
+        try:
+            if self.df.empty:
+                return pd.DataFrame()
+            
+            # 基础筛选：车型分组
+            filtered_data = self.df[self.df['车型分组'].isin(selected_vehicles)].copy()
+            
+            if filtered_data.empty:
+                return pd.DataFrame()
+            
+            # 小订时间范围筛选（基于Intention_Payment_Time）
+            if start_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] >= start_date]
+            if end_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] <= end_date]
+            
+            # 锁单时间范围筛选（基于Lock_Time）
+            if lock_start_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] >= lock_start_date]
+            if lock_end_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] <= lock_end_date]
+            
+            # 基于锁单后N天的筛选（基于business_definition.json最大值+N天）
+            if lock_n_days and 'Lock_Time' in filtered_data.columns and hasattr(self, 'business_def'):
+                for vehicle in selected_vehicles:
+                    if vehicle in self.business_def:
+                        # 计算该车型的预售结束日期 + N天
+                        end_date_str = self.business_def[vehicle]['end']
+                        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+                        max_lock_date = end_date + timedelta(days=lock_n_days)
+                        
+                        # 筛选该车型在指定时间范围内的锁单数据
+                        vehicle_mask = (filtered_data['车型分组'] == vehicle) & (filtered_data['Lock_Time'] <= max_lock_date.strftime('%Y-%m-%d'))
+                        if vehicle == selected_vehicles[0]:  # 第一个车型，直接赋值
+                            time_filtered_data = filtered_data[vehicle_mask]
+                        else:  # 后续车型，合并数据
+                            time_filtered_data = pd.concat([time_filtered_data, filtered_data[vehicle_mask]], ignore_index=True)
+                
+                if 'time_filtered_data' in locals():
+                    filtered_data = time_filtered_data
+            
+            # 产品分类筛选
+            if product_types and 'Product Name' in filtered_data.columns:
+                product_mask = pd.Series([False] * len(filtered_data), index=filtered_data.index)
+                
+                for category in product_types:
+                    if category == "增程":
+                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        category_mask = (
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    elif category == "纯电":
+                        # 其他产品为纯电
+                        category_mask = ~(
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    else:
+                        continue
+                    
+                    product_mask = product_mask | category_mask
+                
+                filtered_data = filtered_data[product_mask]
+            
+            # 最终筛选：只保留有锁单数据的记录用于统计
+            if 'Lock_Time' in filtered_data.columns:
+                lock_data = filtered_data[filtered_data['Lock_Time'].notna()].copy()
+            else:
+                return pd.DataFrame()
+            
+            if lock_data.empty:
+                return pd.DataFrame()
+            
+            # 处理性别数据，统一格式
+            def normalize_gender(gender):
+                if pd.isna(gender):
+                    return '未知性别'
+                gender_str = str(gender).strip().lower()
+                if gender_str in ['男', 'male', 'm', '1']:
+                    return '男'
+                elif gender_str in ['女', 'female', 'f', '0']:
+                    return '女'
+                else:
+                    return '未知性别'
+            
+            # 为所有数据添加性别分类
+            if 'order_gender' in lock_data.columns:
+                lock_data['性别'] = lock_data['order_gender'].apply(normalize_gender)
+            else:
+                return pd.DataFrame()
+            
+            # 根据include_unknown参数过滤未知性别数据
+            if not include_unknown:
+                lock_data = lock_data[lock_data['性别'] != '未知性别']
+            
+            # 获取所有性别类别
+            all_genders = sorted(lock_data['性别'].unique())
+            
+            # 按性别分组统计各车型锁单数
+            result_data = []
+            
+            # 先计算每个车型的总锁单数（用于计算占比）
+            vehicle_totals = {}
+            for vehicle in selected_vehicles:
+                vehicle_totals[vehicle] = len(lock_data[lock_data['车型分组'] == vehicle])
+            
+            for gender in all_genders:
+                gender_data = lock_data[lock_data['性别'] == gender]
+                
+                # 构建该性别的车型对比数据
+                row_data = {'性别': gender}
+                
+                # 为每个车型添加锁单数和占比
+                for vehicle in selected_vehicles:
+                    vehicle_locks = len(gender_data[gender_data['车型分组'] == vehicle])
+                    # 计算该性别在该车型中的占比
+                    vehicle_ratio = (vehicle_locks / vehicle_totals[vehicle] * 100) if vehicle_totals[vehicle] > 0 else 0
+                    
+                    row_data[f'{vehicle}_锁单数'] = vehicle_locks
+                    row_data[f'{vehicle}_锁单占比(%)'] = round(vehicle_ratio, 2)
+                
+                result_data.append(row_data)
+            
+            if result_data:
+                final_df = pd.DataFrame(result_data)
+                # 按第一个车型的锁单数排序
+                if selected_vehicles:
+                    sort_column = f'{selected_vehicles[0]}_锁单数'
+                    final_df = final_df.sort_values(sort_column, ascending=False)
+                return final_df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"准备订单性别锁单数据时出错: {e}")
+            return pd.DataFrame()
+
+    def create_gender_lock_table(self, data: pd.DataFrame) -> pd.DataFrame:
+        """创建订单性别锁单统计表格（车型对比格式）"""
+        if data.empty:
+            return pd.DataFrame({'提示': ['暂无锁单数据']})
+        
+        try:
+            # 获取车型相关的列
+            vehicle_columns = [col for col in data.columns if col.endswith('_锁单数') or col.endswith('_锁单占比(%)')]
+            lock_columns = [col for col in vehicle_columns if col.endswith('_锁单数')]
+            ratio_columns = [col for col in vehicle_columns if col.endswith('_锁单占比(%)')]
+            
+            # 计算锁单数和占比的最大值（用于高亮）
+            lock_max_values = {}
+            ratio_max_values = {}
+            
+            for _, row in data.iterrows():
+                # 找出该行锁单数的最大值
+                lock_values = [row[col] for col in lock_columns]
+                if lock_values:
+                    max_lock = max(lock_values)
+                    lock_max_values[row.name] = max_lock
+                
+                # 找出该行占比的最大值
+                ratio_values = [row[col] for col in ratio_columns]
+                if ratio_values:
+                    max_ratio = max(ratio_values)
+                    ratio_max_values[row.name] = max_ratio
+            
+            # 重新组织表格格式
+            table_data = []
+            
+            for _, row in data.iterrows():
+                table_row = {'性别': row['性别']}
+                
+                # 添加各车型的锁单数和占比，并应用高亮
+                for col in data.columns:
+                    if col == '性别':
+                        continue
+                    
+                    value = row[col]
+                    
+                    if col.endswith('_锁单数'):
+                        # 锁单数格式化并高亮
+                        formatted_value = f"{int(value):,}"
+                        if value == lock_max_values.get(row.name, 0) and value > 0:
+                            formatted_value = f'<span style="color: red; font-weight: bold;">{formatted_value}</span>'
+                        table_row[col] = formatted_value
+                    
+                    elif col.endswith('_锁单占比(%)'):
+                        # 占比格式化并高亮
+                        formatted_value = f"{value}%"
+                        if value == ratio_max_values.get(row.name, 0) and value > 0:
+                            formatted_value = f'<span style="color: red; font-weight: bold;">{formatted_value}</span>'
+                        table_row[col] = formatted_value
+                
+                table_data.append(table_row)
+            
+            return pd.DataFrame(table_data)
+            
+        except Exception as e:
+            logger.error(f"创建订单性别锁单表格时出错: {e}")
+            return pd.DataFrame({'错误': [f'表格生成失败: {str(e)}']})
+
+    def prepare_region_lock_data(self, selected_vehicles: List[str], start_date: str = '', end_date: str = '', 
+                               product_types: List[str] = None, lock_start_date: str = '', lock_end_date: str = '', lock_n_days: int = 30, include_unknown: bool = True) -> pd.DataFrame:
+        """准备父级区域锁单统计数据（支持多种筛选条件）"""
+        try:
+            if self.df.empty:
+                return pd.DataFrame()
+            
+            # 基础筛选：车型分组
+            filtered_data = self.df[self.df['车型分组'].isin(selected_vehicles)].copy()
+            
+            if filtered_data.empty:
+                return pd.DataFrame()
+            
+            # 小订时间范围筛选（基于Intention_Payment_Time）
+            if start_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] >= start_date]
+            if end_date and 'Intention_Payment_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Intention_Payment_Time'] <= end_date]
+            
+            # 锁单时间范围筛选（基于Lock_Time）
+            if lock_start_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] >= lock_start_date]
+            if lock_end_date and 'Lock_Time' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['Lock_Time'] <= lock_end_date]
+            
+            # 基于锁单后N天的筛选（基于business_definition.json最大值+N天）
+            if lock_n_days and 'Lock_Time' in filtered_data.columns and hasattr(self, 'business_def'):
+                for vehicle in selected_vehicles:
+                    if vehicle in self.business_def:
+                        # 计算该车型的预售结束日期 + N天
+                        end_date_str = self.business_def[vehicle]['end']
+                        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+                        max_lock_date = end_date + timedelta(days=lock_n_days)
+                        
+                        # 筛选该车型在指定时间范围内的锁单数据
+                        vehicle_mask = (filtered_data['车型分组'] == vehicle) & (filtered_data['Lock_Time'] <= max_lock_date.strftime('%Y-%m-%d'))
+                        if vehicle == selected_vehicles[0]:  # 第一个车型，直接赋值
+                            time_filtered_data = filtered_data[vehicle_mask]
+                        else:  # 后续车型，合并数据
+                            time_filtered_data = pd.concat([time_filtered_data, filtered_data[vehicle_mask]], ignore_index=True)
+                
+                if 'time_filtered_data' in locals():
+                    filtered_data = time_filtered_data
+            
+            # 产品分类筛选
+            if product_types and 'Product Name' in filtered_data.columns:
+                product_mask = pd.Series([False] * len(filtered_data), index=filtered_data.index)
+                
+                for category in product_types:
+                    if category == "增程":
+                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        category_mask = (
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    elif category == "纯电":
+                        # 其他产品为纯电
+                        category_mask = ~(
+                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
+                            (filtered_data['Product Name'].str.contains('52', na=False) | 
+                             filtered_data['Product Name'].str.contains('66', na=False))
+                        )
+                    else:
+                        continue
+                    
+                    product_mask = product_mask | category_mask
+                
+                filtered_data = filtered_data[product_mask]
+            
+            # 最终筛选：只保留有锁单数据的记录用于统计
+            if 'Lock_Time' in filtered_data.columns:
+                lock_data = filtered_data[filtered_data['Lock_Time'].notna()].copy()
+            else:
+                return pd.DataFrame()
+            
+            if lock_data.empty:
+                return pd.DataFrame()
+            
+            # 处理区域数据，统一格式
+            def normalize_region(region):
+                if pd.isna(region):
+                    return '未知区域'
+                region_str = str(region).strip()
+                if region_str == '' or region_str.lower() == 'nan':
+                    return '未知区域'
+                return region_str
+            
+            # 为所有数据添加区域分类
+            if 'Parent Region Name' in lock_data.columns:
+                lock_data['父级区域'] = lock_data['Parent Region Name'].apply(normalize_region)
+            else:
+                return pd.DataFrame()
+            
+            # 根据include_unknown参数过滤未知区域数据
+            if not include_unknown:
+                lock_data = lock_data[lock_data['父级区域'] != '未知区域']
+            
+            # 获取所有区域类别
+            all_regions = sorted(lock_data['父级区域'].unique())
+            
+            # 按区域分组统计各车型锁单数
+            result_data = []
+            
+            # 先计算每个车型的总锁单数（用于计算占比）
+            vehicle_totals = {}
+            for vehicle in selected_vehicles:
+                vehicle_totals[vehicle] = len(lock_data[lock_data['车型分组'] == vehicle])
+            
+            for region in all_regions:
+                region_data = lock_data[lock_data['父级区域'] == region]
+                
+                # 构建该区域的车型对比数据
+                row_data = {'父级区域': region}
+                
+                # 为每个车型添加锁单数和占比
+                for vehicle in selected_vehicles:
+                    vehicle_locks = len(region_data[region_data['车型分组'] == vehicle])
+                    # 计算该区域在该车型中的占比
+                    vehicle_ratio = (vehicle_locks / vehicle_totals[vehicle] * 100) if vehicle_totals[vehicle] > 0 else 0
+                    
+                    row_data[f'{vehicle}_锁单数'] = vehicle_locks
+                    row_data[f'{vehicle}_锁单占比(%)'] = round(vehicle_ratio, 2)
+                
+                result_data.append(row_data)
+            
+            if result_data:
+                final_df = pd.DataFrame(result_data)
+                # 按第一个车型的锁单数排序
+                if selected_vehicles:
+                    sort_column = f'{selected_vehicles[0]}_锁单数'
+                    final_df = final_df.sort_values(sort_column, ascending=False)
+                return final_df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"准备父级区域锁单数据时出错: {e}")
+            return pd.DataFrame()
+
+    def create_region_lock_table(self, data: pd.DataFrame) -> pd.DataFrame:
+        """创建父级区域锁单统计表格（车型对比格式）"""
+        if data.empty:
+            return pd.DataFrame({'提示': ['暂无锁单数据']})
+        
+        try:
+            # 获取车型相关的列
+            vehicle_columns = [col for col in data.columns if col.endswith('_锁单数') or col.endswith('_锁单占比(%)')]
+            lock_columns = [col for col in vehicle_columns if col.endswith('_锁单数')]
+            ratio_columns = [col for col in vehicle_columns if col.endswith('_锁单占比(%)')]
+            
+            # 计算锁单数和占比的最大值（用于高亮）
+            lock_max_values = {}
+            ratio_max_values = {}
+            
+            for _, row in data.iterrows():
+                # 找出该行锁单数的最大值
+                lock_values = [row[col] for col in lock_columns]
+                if lock_values:
+                    max_lock = max(lock_values)
+                    lock_max_values[row.name] = max_lock
+                
+                # 找出该行占比的最大值
+                ratio_values = [row[col] for col in ratio_columns]
+                if ratio_values:
+                    max_ratio = max(ratio_values)
+                    ratio_max_values[row.name] = max_ratio
+            
+            # 重新组织表格格式
+            table_data = []
+            
+            for _, row in data.iterrows():
+                table_row = {'父级区域': row['父级区域']}
+                
+                # 添加各车型的锁单数和占比，并应用高亮
+                for col in data.columns:
+                    if col == '父级区域':
+                        continue
+                    
+                    value = row[col]
+                    
+                    if col.endswith('_锁单数'):
+                        # 锁单数格式化并高亮
+                        formatted_value = f"{int(value):,}"
+                        if value == lock_max_values.get(row.name, 0) and value > 0:
+                            formatted_value = f'<span style="color: red; font-weight: bold;">{formatted_value}</span>'
+                        table_row[col] = formatted_value
+                    
+                    elif col.endswith('_锁单占比(%)'):
+                        # 占比格式化并高亮
+                        formatted_value = f"{value}%"
+                        if value == ratio_max_values.get(row.name, 0) and value > 0:
+                            formatted_value = f'<span style="color: red; font-weight: bold;">{formatted_value}</span>'
+                        table_row[col] = formatted_value
+                
+                table_data.append(table_row)
+            
+            return pd.DataFrame(table_data)
+            
+        except Exception as e:
+            logger.error(f"创建父级区域锁单表格时出错: {e}")
+            return pd.DataFrame({'错误': [f'表格生成失败: {str(e)}']})
     
     def prepare_lock_performance_table_data(self, selected_vehicles: List[str], n_days: int = 30) -> pd.DataFrame:
         """准备锁单表现表格数据"""
@@ -2335,7 +3497,7 @@ def update_charts(selected_vehicles, days_after_launch=1):
                 font=dict(size=20, color="gray")
             )
             empty_df = pd.DataFrame({'提示': ['请选择车型']})
-            return empty_fig, empty_fig, empty_fig, empty_df
+            return empty_fig, empty_fig, empty_fig, empty_fig, empty_df
         
         # 准备数据
         daily_data = monitor.prepare_daily_data(selected_vehicles)
@@ -2344,9 +3506,10 @@ def update_charts(selected_vehicles, days_after_launch=1):
         cumulative_chart = monitor.create_cumulative_chart(daily_data)
         daily_chart = monitor.create_daily_chart(daily_data)
         change_trend_chart = monitor.create_change_trend_chart(daily_data)
+        conversion_rate_chart = monitor.create_conversion_rate_chart(selected_vehicles, days_after_launch)
         daily_table = monitor.create_daily_change_table(daily_data, days_after_launch)
         
-        return cumulative_chart, daily_chart, change_trend_chart, daily_table
+        return cumulative_chart, daily_chart, change_trend_chart, conversion_rate_chart, daily_table
         
     except Exception as e:
         logger.error(f"图表更新失败: {str(e)}")
@@ -2358,7 +3521,7 @@ def update_charts(selected_vehicles, days_after_launch=1):
             font=dict(size=16, color="red")
         )
         error_df = pd.DataFrame({'错误': [str(e)]})
-        return error_fig, error_fig, error_fig, error_df
+        return error_fig, error_fig, error_fig, error_fig, error_df
 
 def update_refund_charts(selected_vehicles, city_order_min=100, city_order_max=2000):
     """更新退订图表"""
@@ -2464,6 +3627,54 @@ def update_lock_performance_table(selected_vehicles, n_days):
         logger.error(f"错误详情: {traceback.format_exc()}")
         return pd.DataFrame({'错误': [f'表格更新失败: {str(e)}']})
 
+
+
+def update_config_table(selected_vehicles, start_date, end_date, product_categories, lock_start_date, lock_end_date, lock_n_days, age_include_unknown, gender_include_unknown, region_include_unknown):
+    """更新配置模块所有锁单统计表格"""
+    try:
+        if not selected_vehicles:
+            empty_df = pd.DataFrame({'提示': ['请选择车型']})
+            return empty_df, empty_df, empty_df, empty_df, empty_df
+        
+        # 准备Product Name锁单数据
+        product_data = monitor.prepare_product_name_lock_data(
+            selected_vehicles, start_date, end_date, product_categories, lock_start_date, lock_end_date, lock_n_days
+        )
+        product_table = monitor.create_product_name_lock_table(product_data)
+        
+        # 准备中间渠道锁单数据
+        channel_data = monitor.prepare_channel_lock_data(
+            selected_vehicles, start_date, end_date, product_categories, lock_start_date, lock_end_date, lock_n_days
+        )
+        channel_table = monitor.create_channel_lock_table(channel_data)
+        
+        # 准备买家年龄锁单数据
+        age_data = monitor.prepare_age_lock_data(
+            selected_vehicles, start_date, end_date, product_categories, lock_start_date, lock_end_date, lock_n_days, age_include_unknown
+        )
+        age_table = monitor.create_age_lock_table(age_data)
+        
+        # 准备订单性别锁单数据
+        gender_data = monitor.prepare_gender_lock_data(
+            selected_vehicles, start_date, end_date, product_categories, lock_start_date, lock_end_date, lock_n_days, gender_include_unknown
+        )
+        gender_table = monitor.create_gender_lock_table(gender_data)
+        
+        # 准备父级区域锁单数据
+        region_data = monitor.prepare_region_lock_data(
+            selected_vehicles, start_date, end_date, product_categories, lock_start_date, lock_end_date, lock_n_days, region_include_unknown
+        )
+        region_table = monitor.create_region_lock_table(region_data)
+        
+        return product_table, channel_table, age_table, gender_table, region_table
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"配置模块表格更新失败: {str(e)}")
+        logger.error(f"错误详情: {traceback.format_exc()}")
+        error_df = pd.DataFrame({'错误': [f'表格更新失败: {str(e)}']})
+        return error_df, error_df, error_df, error_df, error_df
+
 # 获取车型分组
 vehicle_groups = monitor.get_vehicle_groups()
 
@@ -2492,23 +3703,28 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
             with gr.Row():
                 with gr.Column(scale=1):
                     change_trend_plot = gr.Plot(label="每日小订单数环比变化趋势图")
+
+            
+            with gr.Row():
                 with gr.Column(scale=1):
                     with gr.Row():
                         days_after_launch = gr.Number(
                             label="发布会后第N日",
-                            value=1,
+                            value=6,
                             minimum=0,
                             maximum=30,
                             step=1,
-                            info="计算小订转化率的时间点（0表示发布会当天）"
+                            info="计算小订转化率的时间点（1表示发布会当天）"
                         )
+                with gr.Column(scale=1):
+                    conversion_rate_plot = gr.Plot(label="车型小订转化率对比图")
             
             with gr.Row():
                 daily_table = gr.DataFrame(
                     label="订单日变化表格",
                     interactive=False,
                     wrap=True,
-                    datatype=["str", "html", "html", "html", "html", "html", "html", "html", "html"]
+                    datatype=["str"] + ["html"] * 20  # 支持更多列：第N日(str) + 多个车型的各项指标(html)
                 )
         
         # 退订模块
@@ -2534,7 +3750,8 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                     daily_refund_table = gr.DataFrame(
                         label="每日订单累计退订情况表格",
                         interactive=False,
-                        wrap=True
+                        wrap=True,
+                        datatype=["str"] + ["html"] * 20
                     )
             
             with gr.Accordion("📊 分区域汇总表格", open=True):
@@ -2542,7 +3759,8 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                     regional_summary_table = gr.DataFrame(
                         label="车型对比：分区域累计订单/退订数(退订率)汇总表格",
                         interactive=False,
-                        wrap=True
+                        wrap=True,
+                        datatype=["str"] + ["html"] * 20
                     )
             
             with gr.Accordion("🏙️ 分城市汇总表格", open=False):
@@ -2566,7 +3784,8 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                     city_summary_table = gr.DataFrame(
                         label="车型对比：分城市累计订单/退订数(退订率)汇总表格",
                         interactive=False,
-                        wrap=True
+                        wrap=True,
+                        datatype=["str"] + ["html"] * 20
                     )
         
         # 锁单模块
@@ -2607,10 +3826,127 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                         wrap=True
                     )
         
-        # 配置模块（占位）
+        # 配置模块
         with gr.Tab("⚙️ 配置"):
-            gr.Markdown("### 配置模块")
-            gr.Markdown("*此模块待开发*")
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("### 🎯 筛选条件")
+                    
+                    with gr.Group():
+                        gr.Markdown("#### 车型选择")
+                        config_vehicle_selector = gr.CheckboxGroup(
+                            choices=vehicle_groups,
+                            label="选择车型分组",
+                            value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
+                            interactive=True
+                        )
+                    
+                    with gr.Group():
+                        gr.Markdown("#### 时间范围筛选")
+                        with gr.Row():
+                            config_start_date = gr.Textbox(
+                                label="小订开始日期",
+                                placeholder="YYYY-MM-DD（可选）",
+                                value="2025-08-15"
+                            )
+                            config_end_date = gr.Textbox(
+                                label="小订结束日期",
+                                placeholder="YYYY-MM-DD（可选）",
+                                value=""
+                            )
+                        
+                        with gr.Row():
+                            config_lock_start_date = gr.Textbox(
+                                label="锁单开始日期",
+                                placeholder="YYYY-MM-DD（可选）",
+                                value="2025-09-10"
+                            )
+                            config_lock_end_date = gr.Textbox(
+                                label="锁单结束日期",
+                                placeholder="YYYY-MM-DD（可选）",
+                                value=""
+                            )
+                        
+                        with gr.Row():
+                            config_lock_n_days = gr.Number(
+                                label="锁单后N天数（基于business_definition.json最大值+N天）",
+                                value=30,
+                                minimum=1,
+                                maximum=100,
+                                step=1,
+                                info="输入N天数，用于计算锁单后第N日数据"
+                            )
+                    
+                    with gr.Group():
+                        gr.Markdown("#### 产品分类筛选")
+                        config_product_types = gr.CheckboxGroup(
+                            choices=["增程", "纯电"],
+                            label="产品分类（增程/纯电）",
+                            value=[],
+                            interactive=True
+                        )
+                    
+                    with gr.Row():
+                        config_analyze_btn = gr.Button("🚀 开始分析", variant="primary", size="lg")
+
+                
+                with gr.Column(scale=2):
+                    gr.Markdown("### 📊 Product Name锁单统计")
+                    config_product_table = gr.DataFrame(
+                        label="Product Name锁单统计表格",
+                        interactive=False,
+                        wrap=True
+                    )
+                    
+                    gr.Markdown("### 📊 first_middle_channel_name锁单统计")
+                    config_channel_table = gr.DataFrame(
+                        label="first_middle_channel_name锁单统计表格",
+                        interactive=False,
+                        wrap=True,
+                        datatype=["str"] + ["html"] * 20
+                    )
+                    
+                    gr.Markdown("### 📊 buyer_age锁单统计")
+                    with gr.Row():
+                        config_age_include_unknown = gr.Checkbox(
+                            label="包含未知年龄数据",
+                            value=True,
+                            info="取消勾选将过滤掉年龄为'未知年龄'的数据"
+                        )
+                    config_age_table = gr.DataFrame(
+                        label="buyer_age锁单统计表格",
+                        interactive=False,
+                        wrap=True,
+                        datatype=["str"] + ["html"] * 20
+                    )
+                    
+                    gr.Markdown("### 📊 order_gender锁单统计")
+                    with gr.Row():
+                        config_gender_include_unknown = gr.Checkbox(
+                            label="包含未知性别数据",
+                            value=True,
+                            info="取消勾选将过滤掉性别为'未知性别'的数据"
+                        )
+                    config_gender_table = gr.DataFrame(
+                        label="order_gender锁单统计表格",
+                        interactive=False,
+                        wrap=True,
+                        datatype=["str"] + ["html"] * 20
+                    )
+                    
+                    gr.Markdown("### 📊 Parent Region Name锁单统计")
+                    with gr.Row():
+                        config_region_include_unknown = gr.Checkbox(
+                            label="包含未知区域数据",
+                            value=True,
+                            info="取消勾选将过滤掉区域为'未知区域'的数据"
+                        )
+                    config_region_table = gr.DataFrame(
+                        label="Parent Region Name锁单统计表格",
+                        interactive=False,
+                        wrap=True,
+                        datatype=["str"] + ["html"] * 20
+                    )
         
         # 预测模块（占位）
         with gr.Tab("🔮 预测"):
@@ -2665,13 +4001,13 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
     vehicle_selector.change(
         fn=update_charts,
         inputs=[vehicle_selector, days_after_launch],
-        outputs=[cumulative_plot, daily_plot, change_trend_plot, daily_table]
+        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, daily_table]
     )
     
     days_after_launch.change(
         fn=update_charts,
         inputs=[vehicle_selector, days_after_launch],
-        outputs=[cumulative_plot, daily_plot, change_trend_plot, daily_table]
+        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, daily_table]
     )
     
     refund_vehicle_selector.change(
@@ -2718,11 +4054,18 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         outputs=[lock_performance_table]
     )
     
+    # 配置模块事件绑定 - 仅通过按钮触发分析
+    config_analyze_btn.click(
+        fn=update_config_table,
+        inputs=[config_vehicle_selector, config_start_date, config_end_date, config_product_types, config_lock_start_date, config_lock_end_date, config_lock_n_days, config_age_include_unknown, config_gender_include_unknown, config_region_include_unknown],
+        outputs=[config_product_table, config_channel_table, config_age_table, config_gender_table, config_region_table]
+    )
+    
     # 页面加载时自动更新
     demo.load(
         fn=update_charts,
         inputs=[vehicle_selector, days_after_launch],
-        outputs=[cumulative_plot, daily_plot, change_trend_plot, daily_table]
+        outputs=[cumulative_plot, daily_plot, change_trend_plot, conversion_rate_plot, daily_table]
     )
     
     demo.load(
@@ -2743,6 +4086,12 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         outputs=[lock_performance_table]
     )
     
+    demo.load(
+        fn=update_config_table,
+        inputs=[config_vehicle_selector, config_start_date, config_end_date, config_product_types, config_lock_start_date, config_lock_end_date, config_lock_n_days, config_age_include_unknown, config_gender_include_unknown, config_region_include_unknown],
+        outputs=[config_product_table, config_channel_table, config_age_table, config_gender_table, config_region_table]
+    )
+    
     # 界面加载时初始化预测模块
     def init_prediction():
         predictor.train_models()
@@ -2758,11 +4107,12 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         gr.Markdown("""
         ### 功能说明
         
-        **订单模块**包含四个核心图表：
+        **订单模块**包含五个核心图表：
         1. **累计小订订单数对比图**: 展示各车型从预售开始的累计订单趋势
         2. **每日小订单数对比图**: 对比各车型每日的订单量
         3. **每日小订单数环比变化趋势图**: 显示订单量的日环比变化率
-        4. **订单日变化表格**: 详细的数据表格，包含emoji标记的变化趋势
+        4. **车型小订转化率对比图**: 对比各车型每日的小订转化率趋势
+        5. **订单日变化表格**: 详细的数据表格，包含emoji标记的变化趋势
         
         ### 使用方法
         1. 在车型选择器中勾选要对比的车型（默认选择CM2和CM1）
