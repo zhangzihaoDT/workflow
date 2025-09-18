@@ -574,12 +574,22 @@ class ABComparisonAnalyzer:
                 total_orders = len(sample_df)
                 agent_ratio = agent_orders / total_orders if total_orders > 0 else 0.0
                 
-                # 重复买家分析
+                # 重复买家分析 - 口径1：仅基于身份证号
                 buyer_identity_counts = sample_df['Buyer Identity No'].value_counts()
                 repeat_buyers = buyer_identity_counts[buyer_identity_counts >= 2]
                 repeat_buyer_orders = repeat_buyers.sum()
                 repeat_buyer_ratio = repeat_buyer_orders / total_orders if total_orders > 0 else 0.0
                 unique_repeat_buyers = len(repeat_buyers)
+                
+                # 重复买家分析 - 口径2：身份证号+手机号双重匹配
+                # 创建身份证号+手机号的组合键
+                sample_df_clean = sample_df.dropna(subset=['Buyer Identity No', 'Buyer Cell Phone'])
+                buyer_combo_key = sample_df_clean['Buyer Identity No'].astype(str) + '_' + sample_df_clean['Buyer Cell Phone'].astype(str)
+                buyer_combo_counts = buyer_combo_key.value_counts()
+                repeat_buyers_combo = buyer_combo_counts[buyer_combo_counts >= 2]
+                repeat_buyer_orders_combo = repeat_buyers_combo.sum()
+                repeat_buyer_ratio_combo = repeat_buyer_orders_combo / total_orders if total_orders > 0 else 0.0
+                unique_repeat_buyers_combo = len(repeat_buyers_combo)
                 
                 return {
                     'total_orders': total_orders,
@@ -587,7 +597,10 @@ class ABComparisonAnalyzer:
                     'agent_ratio': agent_ratio,
                     'repeat_buyer_orders': repeat_buyer_orders,
                     'repeat_buyer_ratio': repeat_buyer_ratio,
-                    'unique_repeat_buyers': unique_repeat_buyers
+                    'unique_repeat_buyers': unique_repeat_buyers,
+                    'repeat_buyer_orders_combo': repeat_buyer_orders_combo,
+                    'repeat_buyer_ratio_combo': repeat_buyer_ratio_combo,
+                    'unique_repeat_buyers_combo': unique_repeat_buyers_combo
                 }
             
             # 分析两个样本
@@ -839,6 +852,28 @@ class ABComparisonAnalyzer:
                 '样本A': f"{sample_a_result['unique_repeat_buyers']:,}",
                 '样本B': f"{sample_b_result['unique_repeat_buyers']:,}",
                 '差异': f"{sample_a_result['unique_repeat_buyers'] - sample_b_result['unique_repeat_buyers']:+,}"
+            })
+            
+            # 新增：身份证号+手机号双重匹配的重复买家指标
+            sales_agent_data.append({
+                '指标': '重复买家订单数(身份证+手机)',
+                '样本A': f"{sample_a_result['repeat_buyer_orders_combo']:,}",
+                '样本B': f"{sample_b_result['repeat_buyer_orders_combo']:,}",
+                '差异': f"{sample_a_result['repeat_buyer_orders_combo'] - sample_b_result['repeat_buyer_orders_combo']:+,}"
+            })
+            
+            sales_agent_data.append({
+                '指标': '重复买家订单比例(身份证+手机)',
+                '样本A': f"{sample_a_result['repeat_buyer_ratio_combo']:.2%}",
+                '样本B': f"{sample_b_result['repeat_buyer_ratio_combo']:.2%}",
+                '差异': f"{sample_a_result['repeat_buyer_ratio_combo'] - sample_b_result['repeat_buyer_ratio_combo']:+.2%}"
+            })
+            
+            sales_agent_data.append({
+                '指标': '重复买家数量(身份证+手机)',
+                '样本A': f"{sample_a_result['unique_repeat_buyers_combo']:,}",
+                '样本B': f"{sample_b_result['unique_repeat_buyers_combo']:,}",
+                '差异': f"{sample_a_result['unique_repeat_buyers_combo'] - sample_b_result['unique_repeat_buyers_combo']:+,}"
             })
         else:
             sales_agent_data.append({
@@ -1178,4 +1213,4 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
         """)
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=7863, share=False)

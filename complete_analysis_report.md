@@ -1,7 +1,7 @@
 # W35 异常检测工作流 - 综合分析报告
 
 ## 报告概览
-- **生成时间**: 2025-09-15T17:03:39.124523
+- **生成时间**: 2025-09-18T09:56:50.784576
 - **工作流版本**: W35 Anomaly Detection Workflow
 - **分析范围**: 数据质量检测 + 结构异常分析 + 销售代理分析 + 时间间隔分析
 
@@ -11,28 +11,28 @@
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet
-- **生成时间**: 2025-09-15T17:03:38.808448
-- **文件大小**: 14.48 MB
+- **生成时间**: 2025-09-18T09:56:50.450992
+- **文件大小**: 16.28 MB
 
 ## 数据基本信息
-- **数据形状**: 340513 行 × 26 列
-- **数据完整性**: 84.51%
+- **数据形状**: 340654 行 × 30 列
+- **数据完整性**: 82.08%
 - **重复行数**: 0
 
 ## 数据类型分布
-- **数值列**: 5 个
-- **分类列**: 15 个  
-- **日期列**: 6 个
+- **数值列**: 6 个
+- **分类列**: 16 个  
+- **日期列**: 8 个
 
 ## 列信息详情
 ### 数值列
-Store Agent Phone, Buyer Cell Phone, Intention Payment Time 小时, buyer_age, Order Number 不同计数
+Store Agent Phone, Buyer Cell Phone, Intention Payment Time 小时, buyer_age, 开票价格, Order Number 不同计数
 
 ### 分类列
-车型分组, pre_vehicle_model_type, Order Number, Store Agent Name, Store Agent Id, Buyer Identity No, first_middle_channel_name, order_gender, first_big_channel_name, first_small_channel_name, Parent Region Name, License Province, license_city_level, License City, Product Name
+Order Number, 车型分组, Store City, Store Name, Store Code, pre_vehicle_model_type, Store Agent Name, Store Agent Id, Buyer Identity No, first_middle_channel_name, order_gender, Parent Region Name, License Province, license_city_level, License City, Product Name
 
 ### 日期列
-Order_Create_Time, Intention_Payment_Time, intention_refund_time, first_assign_time, Lock_Time, first_touch_time
+store_create_date, Invoice_Upload_Time, Order_Create_Time, Intention_Payment_Time, intention_refund_time, first_assign_time, Lock_Time, first_touch_time
 
 ## 异常检测结果
 
@@ -40,25 +40,28 @@ Order_Create_Time, Intention_Payment_Time, intention_refund_time, first_assign_t
 
 | 列名 | 缺失数量 | 缺失比例 |
 |------|----------|----------|
-| pre_vehicle_model_type | 316111 | 92.83% |
+| Store City | 622 | 0.18% |
+| pre_vehicle_model_type | 316261 | 92.84% |
 | Store Agent Name | 158 | 0.05% |
 | Store Agent Id | 158 | 0.05% |
 | Store Agent Phone | 158 | 0.05% |
-| Buyer Identity No | 128757 | 37.81% |
-| Intention_Payment_Time | 180799 | 53.10% |
-| intention_refund_time | 252961 | 74.29% |
-| Intention Payment Time 小时 | 180799 | 53.10% |
-| Lock_Time | 195949 | 57.55% |
-| buyer_age | 111867 | 32.85% |
-| first_touch_time | 1663 | 0.49% |
-| license_city_level | 2122 | 0.62% |
+| Buyer Identity No | 128936 | 37.85% |
+| Invoice_Upload_Time | 230322 | 67.61% |
+| Intention_Payment_Time | 180938 | 53.11% |
+| intention_refund_time | 251054 | 73.70% |
+| Intention Payment Time 小时 | 180938 | 53.11% |
+| Lock_Time | 195200 | 57.30% |
+| buyer_age | 112026 | 32.89% |
+| first_touch_time | 1697 | 0.50% |
+| license_city_level | 2123 | 0.62% |
+| 开票价格 | 230322 | 67.61% |
 
 ### 重复数据检查
 ✅ 未发现重复数据
 
 ## 数据质量评估
 - **整体评级**: 一般 ⚠️
-- **完整性得分**: 84.51%
+- **完整性得分**: 82.08%
 
 
 ---

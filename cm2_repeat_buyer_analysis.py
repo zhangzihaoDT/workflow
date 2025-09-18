@@ -76,19 +76,11 @@ def analyze_channel_preference(repeat_buyer_orders):
     """分析重复买家的渠道偏好"""
     logger.info("开始分析渠道偏好...")
     
-    # 大渠道分布
-    big_channel_dist = repeat_buyer_orders['first_big_channel_name'].value_counts()
-    
-    # 中渠道分布
+    # 中渠道分布（数据中只有这个字段）
     middle_channel_dist = repeat_buyer_orders['first_middle_channel_name'].value_counts()
     
-    # 小渠道分布
-    small_channel_dist = repeat_buyer_orders['first_small_channel_name'].value_counts().head(10)
-    
     return {
-        'big_channel_distribution': big_channel_dist,
-        'middle_channel_distribution': middle_channel_dist,
-        'small_channel_distribution': small_channel_dist
+        'middle_channel_distribution': middle_channel_dist
     }
 
 def analyze_gender_distribution(repeat_buyer_orders):
@@ -239,14 +231,7 @@ def generate_detailed_report(regional_analysis, channel_analysis, gender_analysi
     
     # 渠道偏好分析
     report_lines.append("\n## 渠道偏好分析\n")
-    report_lines.append("### 大渠道分布\n")
-    report_lines.append("| 大渠道 | 订单数 | 占比 |\n")
-    report_lines.append("|--------|--------|------|\n")
-    for channel, count in channel_analysis['big_channel_distribution'].items():
-        ratio = count / total_orders * 100
-        report_lines.append(f"| {channel} | {count} | {ratio:.2f}% |\n")
-    
-    report_lines.append("\n### 中渠道分布\n")
+    report_lines.append("### 中渠道分布\n")
     report_lines.append("| 中渠道 | 订单数 | 占比 |\n")
     report_lines.append("|--------|--------|------|\n")
     for channel, count in channel_analysis['middle_channel_distribution'].items():
@@ -316,9 +301,9 @@ def generate_detailed_report(regional_analysis, channel_analysis, gender_analysi
     report_lines.append(f"1. **地域集中度**: {top_province}省是重复买家最集中的地区，占比{top_province_ratio:.1f}%\n")
     
     # 渠道洞察
-    top_big_channel = channel_analysis['big_channel_distribution'].index[0]
-    top_channel_ratio = channel_analysis['big_channel_distribution'].iloc[0] / total_orders * 100
-    report_lines.append(f"2. **渠道偏好**: {top_big_channel}是重复买家的主要渠道，占比{top_channel_ratio:.1f}%\n")
+    top_middle_channel = channel_analysis['middle_channel_distribution'].index[0]
+    top_channel_ratio = channel_analysis['middle_channel_distribution'].iloc[0] / total_orders * 100
+    report_lines.append(f"2. **渠道偏好**: {top_middle_channel}是重复买家的主要中渠道，占比{top_channel_ratio:.1f}%\n")
     
     # 购买行为洞察
     most_common_freq = pattern_analysis['purchase_frequency_distribution'].index[0]
