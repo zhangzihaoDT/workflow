@@ -1365,7 +1365,7 @@ class OrderTrendMonitor:
         
         return pd.DataFrame(summary_data)
     
-    def prepare_refund_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
+    def prepare_refund_data(self, selected_vehicles: List[str], refund_n_days: int = 30) -> pd.DataFrame:
         """准备退订数据"""
         if not selected_vehicles:
             return pd.DataFrame()
@@ -1387,10 +1387,17 @@ class OrderTrendMonitor:
             if len(vehicle_df) == 0:
                 continue
             
-            # 计算该车型的最大天数（基于business_definition.json）
+            # 使用用户指定的第N日作为观察时间点
             start_date = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
-            end_date = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
-            max_days = (end_date - start_date).days + 1
+            observation_cutoff_date = start_date + timedelta(days=refund_n_days)
+            
+            # 只考虑在观察截止时间点前的退订
+            vehicle_df = vehicle_df[
+                pd.to_datetime(vehicle_df['intention_refund_time']) <= observation_cutoff_date
+            ]
+            
+            if len(vehicle_df) == 0:
+                continue
             
             # 按退订日期分组统计退订数
             daily_refunds = vehicle_df.groupby(vehicle_df['intention_refund_time'].dt.date).size().reset_index()
@@ -1402,10 +1409,10 @@ class OrderTrendMonitor:
                 lambda x: self.calculate_days_from_start(vehicle, x.to_pydatetime() if hasattr(x, 'to_pydatetime') else x)
             )
             
-            # 过滤有效天数（>=1 且 <= max_days）
+            # 过滤有效天数（>=1 且 <= refund_n_days）
             daily_refunds = daily_refunds[
                 (pd.to_numeric(daily_refunds['days_from_start'], errors='coerce') >= 1) & 
-                (pd.to_numeric(daily_refunds['days_from_start'], errors='coerce') <= max_days)
+                (pd.to_numeric(daily_refunds['days_from_start'], errors='coerce') <= refund_n_days)
             ]
             
             # 计算累计退订数
@@ -1421,14 +1428,14 @@ class OrderTrendMonitor:
             return pd.concat(refund_stats, ignore_index=True)
         return pd.DataFrame()
     
-    def prepare_refund_rate_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
+    def prepare_refund_rate_data(self, selected_vehicles: List[str], refund_n_days: int = 30) -> pd.DataFrame:
         """准备退订率数据（累计小订退订/累计小订）"""
         if not selected_vehicles:
             return pd.DataFrame()
         
         # 获取订单数据和退订数据
         order_data = self.prepare_daily_data(selected_vehicles)
-        refund_data = self.prepare_refund_data(selected_vehicles)
+        refund_data = self.prepare_refund_data(selected_vehicles, refund_n_days)
         
         if order_data.empty:
             return pd.DataFrame()
@@ -1443,9 +1450,8 @@ class OrderTrendMonitor:
             if vehicle_orders.empty:
                 continue
             
-            # 创建完整的天数范围
-            max_day = vehicle_orders['days_from_start'].max()
-            all_days = pd.DataFrame({'days_from_start': range(1, max_day + 1)})
+            # 创建完整的天数范围，限制到第N日
+            all_days = pd.DataFrame({'days_from_start': range(1, refund_n_days + 1)})
             
             # 合并订单和退订数据
             merged = all_days.merge(vehicle_orders[['days_from_start', 'cumulative_orders']], on='days_from_start', how='left')
@@ -1468,47 +1474,13 @@ class OrderTrendMonitor:
             return pd.concat(rate_stats, ignore_index=True)
         return pd.DataFrame()
     
-    def prepare_daily_refund_rate_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
-        """准备每日小订在当前观察时间范围的累计退订率数据 - 统一按CM2观察时间点计算"""
+    def prepare_daily_refund_rate_data(self, selected_vehicles: List[str], refund_n_days: int = 30) -> pd.DataFrame:
+        """准备每日小订在当前观察时间范围的累计退订率数据 - 使用用户指定的第N日作为观察时间点"""
         if not selected_vehicles:
             return pd.DataFrame()
         
-        # 首先获取CM2的当前观察时间点（参考main.py的逻辑）
-        cm2_current_day = None
-        if 'CM2' in selected_vehicles and 'CM2' in self.business_def:
-            cm2_data = self.df[self.df['车型分组'] == 'CM2']
-            if not cm2_data.empty:
-                cm2_start = datetime.strptime(self.business_def['CM2']['start'], '%Y-%m-%d')
-                cm2_data_copy = cm2_data.copy()
-                cm2_data_copy['date'] = pd.to_datetime(cm2_data_copy['Intention_Payment_Time']).dt.date
-                # 过滤掉NaN值，确保数据类型一致
-                valid_dates = cm2_data_copy['date'].dropna()
-                cm2_latest_date = valid_dates.max() if not valid_dates.empty else None
-                if cm2_latest_date is not None:
-                    cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
-                else:
-                    cm2_current_day = None
-        
-        # 如果没有CM2数据，则动态计算观察时间点
-        if cm2_current_day is None:
-            vehicle_max_days = {}
-            for vehicle in selected_vehicles:
-                if vehicle not in self.business_def:
-                    continue
-                vehicle_data = self.df[self.df['车型分组'] == vehicle]
-                if not vehicle_data.empty:
-                    vehicle_start = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
-                    vehicle_end = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
-                    business_max_days = (vehicle_end - vehicle_start).days + 1
-                    max_date = vehicle_data['Intention_Payment_Time'].max()
-                    actual_max_day = (max_date - vehicle_start).days + 1
-                    vehicle_max_days[vehicle] = min(actual_max_day, business_max_days)
-            
-            if not vehicle_max_days:
-                return pd.DataFrame()
-            observation_day = min(vehicle_max_days.values())
-        else:
-            observation_day = cm2_current_day
+        # 使用用户输入的第N日作为观察时间点
+        observation_day = refund_n_days
         
         daily_rate_stats = []
         
@@ -1619,7 +1591,7 @@ class OrderTrendMonitor:
         
         return fig
     
-    def create_cumulative_refund_rate_chart(self, data: pd.DataFrame) -> go.Figure:
+    def create_cumulative_refund_rate_chart(self, data: pd.DataFrame, refund_n_days: int = 30) -> go.Figure:
         """创建累计小订退订率对比图"""
         fig = go.Figure()
         
@@ -1657,6 +1629,7 @@ class OrderTrendMonitor:
             ),
             xaxis_title="第N日",
             yaxis_title="累计退订率 (%)",
+            xaxis=dict(range=[1, refund_n_days]),
             hovermode='x unified',
             template='plotly_white',
             height=400
@@ -1742,7 +1715,7 @@ class OrderTrendMonitor:
         
         return pd.DataFrame(table_data)
     
-    def prepare_regional_summary_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
+    def prepare_regional_summary_data(self, selected_vehicles: List[str], refund_n_days: int = 30) -> pd.DataFrame:
         """准备分区域累计订单、退订数和退订率汇总数据 - 按观察日期计算"""
         if not selected_vehicles:
             return pd.DataFrame()
@@ -1750,42 +1723,8 @@ class OrderTrendMonitor:
         if self.df is None:
             return pd.DataFrame()
         
-        # 获取观察时间点（参考prepare_daily_refund_rate_data的逻辑）
-        cm2_current_day = None
-        if 'CM2' in selected_vehicles and 'CM2' in self.business_def:
-            cm2_data = self.df[self.df['车型分组'] == 'CM2']
-            if not cm2_data.empty:
-                cm2_start = datetime.strptime(self.business_def['CM2']['start'], '%Y-%m-%d')
-                cm2_data_copy = cm2_data.copy()
-                cm2_data_copy['date'] = pd.to_datetime(cm2_data_copy['Intention_Payment_Time']).dt.date
-                # 过滤掉NaN值，确保数据类型一致
-                valid_dates = cm2_data_copy['date'].dropna()
-                cm2_latest_date = valid_dates.max() if not valid_dates.empty else None
-                if cm2_latest_date is not None:
-                    cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
-                else:
-                    cm2_current_day = None
-        
-        # 如果没有CM2数据，则动态计算观察时间点
-        if cm2_current_day is None:
-            vehicle_max_days = {}
-            for vehicle in selected_vehicles:
-                if vehicle not in self.business_def:
-                    continue
-                vehicle_data = self.df[self.df['车型分组'] == vehicle]
-                if not vehicle_data.empty:
-                    vehicle_start = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
-                    vehicle_end = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
-                    business_max_days = (vehicle_end - vehicle_start).days + 1
-                    max_date = vehicle_data['Intention_Payment_Time'].max()
-                    actual_max_day = (max_date - vehicle_start).days + 1
-                    vehicle_max_days[vehicle] = min(actual_max_day, business_max_days)
-            
-            if not vehicle_max_days:
-                return pd.DataFrame()
-            observation_day = min(vehicle_max_days.values())
-        else:
-            observation_day = cm2_current_day
+        # 使用用户指定的第N日作为观察时间点
+        observation_day = refund_n_days
         
         regional_stats = []
         
@@ -1898,47 +1837,13 @@ class OrderTrendMonitor:
         
         return table_df
     
-    def prepare_city_summary_data(self, selected_vehicles: List[str]) -> pd.DataFrame:
+    def prepare_city_summary_data(self, selected_vehicles: List[str], refund_n_days: int = 30) -> pd.DataFrame:
         """准备分城市累计订单、退订数和退订率数据 - 按观察日期计算"""
         if not selected_vehicles:
             return pd.DataFrame()
         
-        # 获取观察时间点（参考prepare_daily_refund_rate_data的逻辑）
-        cm2_current_day = None
-        if 'CM2' in selected_vehicles and 'CM2' in self.business_def:
-            cm2_data = self.df[self.df['车型分组'] == 'CM2']
-            if not cm2_data.empty:
-                cm2_start = datetime.strptime(self.business_def['CM2']['start'], '%Y-%m-%d')
-                cm2_data_copy = cm2_data.copy()
-                cm2_data_copy['date'] = pd.to_datetime(cm2_data_copy['Intention_Payment_Time']).dt.date
-                # 过滤掉NaN值，确保数据类型一致
-                valid_dates = cm2_data_copy['date'].dropna()
-                cm2_latest_date = valid_dates.max() if not valid_dates.empty else None
-                if cm2_latest_date is not None:
-                    cm2_current_day = (pd.to_datetime(cm2_latest_date) - pd.to_datetime(cm2_start)).days
-                else:
-                    cm2_current_day = None
-        
-        # 如果没有CM2数据，则动态计算观察时间点
-        if cm2_current_day is None:
-            vehicle_max_days = {}
-            for vehicle in selected_vehicles:
-                if vehicle not in self.business_def:
-                    continue
-                vehicle_data = self.df[self.df['车型分组'] == vehicle]
-                if not vehicle_data.empty:
-                    vehicle_start = datetime.strptime(self.business_def[vehicle]['start'], '%Y-%m-%d')
-                    vehicle_end = datetime.strptime(self.business_def[vehicle]['end'], '%Y-%m-%d')
-                    business_max_days = (vehicle_end - vehicle_start).days + 1
-                    max_date = vehicle_data['Intention_Payment_Time'].max()
-                    actual_max_day = (max_date - vehicle_start).days + 1
-                    vehicle_max_days[vehicle] = min(actual_max_day, business_max_days)
-            
-            if not vehicle_max_days:
-                return pd.DataFrame()
-            observation_day = min(vehicle_max_days.values())
-        else:
-            observation_day = cm2_current_day
+        # 使用用户输入的第N日作为观察时间点
+        observation_day = refund_n_days
         
         city_stats = []
         
@@ -4227,7 +4132,7 @@ def update_charts(selected_vehicles, days_after_launch=1):
         error_df = pd.DataFrame({'错误': [str(e)]})
         return error_fig, error_fig, error_fig, error_fig, error_df, error_df
 
-def update_refund_charts(selected_vehicles, city_order_min=100, city_order_max=2000):
+def update_refund_charts(selected_vehicles, refund_n_days=30, city_order_min=100, city_order_max=2000):
     """更新退订图表"""
     try:
         if not selected_vehicles:
@@ -4242,15 +4147,15 @@ def update_refund_charts(selected_vehicles, city_order_min=100, city_order_max=2
             return empty_fig, empty_fig, empty_fig, empty_df, empty_df, empty_df
 
         # 准备退订相关数据
-        refund_data = monitor.prepare_refund_data(selected_vehicles)
-        refund_rate_data = monitor.prepare_refund_rate_data(selected_vehicles)
-        daily_refund_rate_data = monitor.prepare_daily_refund_rate_data(selected_vehicles)
-        regional_summary_data = monitor.prepare_regional_summary_data(selected_vehicles)
-        city_summary_data = monitor.prepare_city_summary_data(selected_vehicles)
+        refund_data = monitor.prepare_refund_data(selected_vehicles, refund_n_days)
+        refund_rate_data = monitor.prepare_refund_rate_data(selected_vehicles, refund_n_days)
+        daily_refund_rate_data = monitor.prepare_daily_refund_rate_data(selected_vehicles, refund_n_days)
+        regional_summary_data = monitor.prepare_regional_summary_data(selected_vehicles, refund_n_days)
+        city_summary_data = monitor.prepare_city_summary_data(selected_vehicles, refund_n_days)
         
         # 创建图表
         cumulative_refund_chart = monitor.create_cumulative_refund_chart(refund_data)
-        cumulative_refund_rate_chart = monitor.create_cumulative_refund_rate_chart(refund_rate_data)
+        cumulative_refund_rate_chart = monitor.create_cumulative_refund_rate_chart(refund_rate_data, refund_n_days)
         daily_refund_rate_chart = monitor.create_daily_refund_rate_chart(daily_refund_rate_data)
         daily_refund_table = monitor.create_daily_refund_table(daily_refund_rate_data)
         regional_summary_table = monitor.create_regional_summary_table(regional_summary_data)
@@ -4513,12 +4418,22 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
         # 退订模块
         with gr.Tab("🔄 退订"):
             with gr.Row():
-                refund_vehicle_selector = gr.CheckboxGroup(
-                    choices=vehicle_groups,
-                    label="选择车型分组",
-                    value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
-                    interactive=True
-                )
+                with gr.Column(scale=1):
+                    refund_vehicle_selector = gr.CheckboxGroup(
+                        choices=vehicle_groups,
+                        label="选择车型分组",
+                        value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
+                        interactive=True
+                    )
+                with gr.Column(scale=1):
+                    refund_n_days = gr.Number(
+                        label="预售发布会后第N日",
+                        value=44,
+                        minimum=1,
+                        maximum=100,
+                        step=1,
+                        info="设置观察时间点为预售发布会后的第N日（基于business_definition.json中各车型的start day）"
+                    )
             
             with gr.Row():
                 with gr.Column(scale=1):
@@ -4909,19 +4824,25 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
     
     refund_vehicle_selector.change(
         fn=update_refund_charts,
-        inputs=[refund_vehicle_selector, city_order_min, city_order_max],
+        inputs=[refund_vehicle_selector, refund_n_days, city_order_min, city_order_max],
+        outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
+    )
+    
+    refund_n_days.change(
+        fn=update_refund_charts,
+        inputs=[refund_vehicle_selector, refund_n_days, city_order_min, city_order_max],
         outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
     )
     
     city_order_min.change(
         fn=update_refund_charts,
-        inputs=[refund_vehicle_selector, city_order_min, city_order_max],
+        inputs=[refund_vehicle_selector, refund_n_days, city_order_min, city_order_max],
         outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
     )
     
     city_order_max.change(
         fn=update_refund_charts,
-        inputs=[refund_vehicle_selector, city_order_min, city_order_max],
+        inputs=[refund_vehicle_selector, refund_n_days, city_order_min, city_order_max],
         outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
     )
     
@@ -4974,7 +4895,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
     
     demo.load(
         fn=update_refund_charts,
-        inputs=[refund_vehicle_selector, city_order_min, city_order_max],
+        inputs=[refund_vehicle_selector, refund_n_days, city_order_min, city_order_max],
         outputs=[cumulative_refund_plot, cumulative_refund_rate_plot, daily_refund_rate_plot, daily_refund_table, regional_summary_table, city_summary_table]
     )
     
