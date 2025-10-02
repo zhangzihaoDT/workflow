@@ -47,6 +47,40 @@ class ABComparisonAnalyzer:
         """获取产品分类列表：基于Product Name分为增程和纯电"""
         return ["增程", "纯电"]
     
+    def get_battery_types(self) -> List[str]:
+        """获取电池类型分类列表：基于business_definition.json中的battery_types定义"""
+        try:
+            with open("/Users/zihao_/Documents/github/W35_workflow/business_definition.json", "r", encoding="utf-8") as f:
+                business_def = json.load(f)
+                
+            if "battery_types" in business_def:
+                # 返回电池类型分类（A_LFP, B_NCM, C_EXCLUDE）
+                return list(business_def["battery_types"].keys())
+            return []
+        except Exception as e:
+            logger.error(f"获取电池类型分类失败: {str(e)}")
+            return []
+            
+    def get_battery_type_mapping(self) -> Dict[str, str]:
+        """获取车型到电池类型的映射"""
+        try:
+            with open("/Users/zihao_/Documents/github/W35_workflow/business_definition.json", "r", encoding="utf-8") as f:
+                business_def = json.load(f)
+            
+            if "battery_types" not in business_def:
+                return {}
+                
+            # 创建车型到电池类型的映射
+            model_to_battery_type = {}
+            for battery_type, models in business_def["battery_types"].items():
+                for model in models:
+                    model_to_battery_type[model] = battery_type
+                    
+            return model_to_battery_type
+        except Exception as e:
+            logger.error(f"获取电池类型映射失败: {str(e)}")
+            return {}
+    
     def get_parent_regions(self) -> List[str]:
         """获取Parent Region Name列表"""
         if 'Parent Region Name' in self.df.columns:
@@ -105,7 +139,8 @@ class ABComparisonAnalyzer:
                      vehicle_groups: List[str] = None, refund_only: bool = False, 
                      locked_only: bool = False, order_create_start_date: str = '', order_create_end_date: str = '',
                      lock_start_date: str = '', lock_end_date: str = '',
-                     exclude_refund: bool = False, exclude_locked: bool = False) -> pd.DataFrame:
+                     exclude_refund: bool = False, exclude_locked: bool = False,
+                     battery_types: List[str] = None) -> pd.DataFrame:
         """筛选样本数据"""
         # 从完整数据开始
         mask = pd.Series([True] * len(self.df), index=self.df.index)
@@ -168,6 +203,17 @@ class ABComparisonAnalyzer:
             mask = mask & (self.df['车型分组'].isin(vehicle_groups))
         elif vehicle_types and '车型分组' in self.df.columns:  # 保持向后兼容
             mask = mask & (self.df['车型分组'].isin(vehicle_types))
+            
+        # 8. 电池类型筛选
+        if battery_types and 'Product Name' in self.df.columns:
+            battery_type_mapping = self.get_battery_type_mapping()
+            if battery_type_mapping:
+                # 创建一个临时列来标记电池类型
+                temp_df = self.df.copy()
+                temp_df['battery_type'] = temp_df['Product Name'].map(battery_type_mapping)
+                # 筛选指定电池类型的数据
+                battery_mask = temp_df['battery_type'].isin(battery_types)
+                mask = mask & battery_mask
         
         sample_data = self.df[mask].copy()
         
@@ -985,14 +1031,14 @@ class ABComparisonAnalyzer:
 # 创建分析器实例
 analyzer = ABComparisonAnalyzer()
 
-def run_ab_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_a,
-                   order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
-                   pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a, 
-                   refund_only_a, locked_only_a, exclude_refund_a, exclude_locked_a,
-                   start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
-                   order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
-                   pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b,
-                   refund_only_b, locked_only_b, exclude_refund_b, exclude_locked_b):
+def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_a, 
+                       order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
+                       pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a, refund_only_a, locked_only_a,
+                       exclude_refund_a, exclude_locked_a, battery_types_a,
+                       start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
+                       order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
+                       pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b, refund_only_b, locked_only_b,
+                       exclude_refund_b, exclude_locked_b, battery_types_b):
     """执行AB对比分析"""
     try:
         # 筛选样本A
@@ -1007,7 +1053,8 @@ def run_ab_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_da
             refund_only=refund_only_a,
             locked_only=locked_only_a,
             exclude_refund=exclude_refund_a,
-            exclude_locked=exclude_locked_a
+            exclude_locked=exclude_locked_a,
+            battery_types=battery_types_a if battery_types_a else None
         )
         sample_a_desc = f"{start_date_a}至{end_date_a}, 车型:{','.join(vehicle_types_a) if vehicle_types_a else '全部'}, {'仅退订' if refund_only_a else ''}{'仅锁单' if locked_only_a else ''}"
         
@@ -1023,7 +1070,8 @@ def run_ab_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_da
             refund_only=refund_only_b,
             locked_only=locked_only_b,
             exclude_refund=exclude_refund_b,
-            exclude_locked=exclude_locked_b
+            exclude_locked=exclude_locked_b,
+            battery_types=battery_types_b if battery_types_b else None
         )
         sample_b_desc = f"{start_date_b}至{end_date_b}, 车型:{','.join(vehicle_types_b) if vehicle_types_b else '全部'}, {'仅退订' if refund_only_b else ''}{'仅锁单' if locked_only_b else ''}"
         
@@ -1098,6 +1146,10 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
                     lock_end_date_a = gr.Textbox(label="锁单结束日期", value=lock_max_date, placeholder="YYYY-MM-DD（可选）")
             
             pre_vehicle_model_types_a = gr.CheckboxGroup(choices=pre_vehicle_model_types, label="产品分类（增程/纯电）", value=[])
+            
+            # 添加电池类型选择组件
+            battery_types = analyzer.get_battery_types()
+            battery_types_a = gr.CheckboxGroup(choices=battery_types, label="电池类型分类", value=[])
             parent_regions_a = gr.Dropdown(choices=parent_regions, label="Parent Region Name", multiselect=True, value=None)
             vehicle_types_a = gr.CheckboxGroup(choices=vehicle_types, label="车型选择", value=[])
             refund_only_a = gr.Checkbox(label="仅退订数据", value=False)
@@ -1133,6 +1185,9 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
                     lock_end_date_b = gr.Textbox(label="锁单结束日期", value=lock_max_date, placeholder="YYYY-MM-DD（可选）")
             
             pre_vehicle_model_types_b = gr.CheckboxGroup(choices=pre_vehicle_model_types, label="产品分类（增程/纯电）", value=[])
+            
+            # 添加电池类型选择组件
+            battery_types_b = gr.CheckboxGroup(choices=battery_types, label="电池类型分类", value=[])
             parent_regions_b = gr.Dropdown(choices=parent_regions, label="Parent Region Name", multiselect=True, value=None)
             vehicle_types_b = gr.CheckboxGroup(choices=vehicle_types, label="车型选择", value=[])
             refund_only_b = gr.Checkbox(label="仅退订数据", value=False)
@@ -1170,16 +1225,16 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
     
     # 绑定分析函数
     analyze_btn.click(
-        fn=run_ab_analysis,
+        fn=run_analysis,
         inputs=[
             start_date_a, end_date_a, refund_start_date_a, refund_end_date_a,
             order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
             pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a,
-            refund_only_a, locked_only_a, exclude_refund_a, exclude_locked_a,
+            refund_only_a, locked_only_a, exclude_refund_a, exclude_locked_a, battery_types_a,
             start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
             order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
             pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b,
-            refund_only_b, locked_only_b, exclude_refund_b, exclude_locked_b
+            refund_only_b, locked_only_b, exclude_refund_b, exclude_locked_b, battery_types_b
         ],
         outputs=[output, anomaly_table, sales_agent_table, time_interval_table]
     )
@@ -1213,4 +1268,4 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
         """)
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7863, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=7865, share=False)

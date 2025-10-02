@@ -6,6 +6,25 @@
     "CM2": { "start": "2025-08-15", "end": "2025-09-10" },
     "DM1": { "start": "2025-04-18", "end": "2025-05-13" }
   },
+  "battery_types": {
+    "A_LFP": [
+      "L6 Max 标准版",
+      "全新智己L6 Max",
+      "全新智己L6 Max+"
+    ],
+    "B_NCM": [
+      "L6 Max 长续航版",
+      "L6 Max 超强性能版",
+      "L6 Max 超长续航版",
+      "L6 Max 长续航欧版",
+      "全新智己L6 Ultra",
+      "全新智己L6 Pro Max"
+    ],
+    "C_EXCLUDE": [
+      "L6 Max 光年版",
+      "L6-M0-75RWD-Vendue"
+    ]
+  },
   "vehicle_prices": {
     "智己LS7焕新版": 339900,
     "智己LS7 MAX": 339800,
