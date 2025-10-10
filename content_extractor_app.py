@@ -514,7 +514,7 @@ def create_app():
     .header {
         text-align: center;
         padding: 20px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #C8D0D9 0%, #ffffff 100%);
         color: white;
         border-radius: 10px;
         margin-bottom: 20px;
