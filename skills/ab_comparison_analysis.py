@@ -745,7 +745,9 @@ class ABComparisonAnalyzer:
     
     def generate_comparison_report(self, sample_a: pd.DataFrame, sample_b: pd.DataFrame, 
                                  sample_a_desc: str, sample_b_desc: str, 
-                                 parent_regions_filter: List[str] = None) -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                                 parent_regions_filter: List[str] = None,
+                                 sample_a_label: str = "样本A",
+                                 sample_b_label: str = "样本B") -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """生成对比分析报告"""
         # 执行三种异常检测
         region_anomalies = self.analyze_region_distribution(sample_a, sample_b, parent_regions_filter)
@@ -755,6 +757,10 @@ class ABComparisonAnalyzer:
         # 执行销售代理分析和时间间隔分析
         sales_agent_results = self.analyze_sales_agent_comparison(sample_a, sample_b)
         time_interval_results = self.analyze_time_interval_comparison(sample_a, sample_b)
+
+        # 动态样本名称用于列名和展示（已从调用方传入），若为空则回退到默认
+        sample_a_label = sample_a_label or "样本A"
+        sample_b_label = sample_b_label or "样本B"
         
         # 合并所有异常数据
         all_anomalies = region_anomalies + channel_anomalies + demographic_anomalies
@@ -787,10 +793,10 @@ class ABComparisonAnalyzer:
                 '异常类型': anomaly['type'],
                 '异常项目': anomaly['item'],
                 '异常子类': anomaly['anomaly_type'],
-                '样本A绝对值': f"{anomaly['sample_a_abs']:,}",
-                '样本B绝对值': f"{anomaly['sample_b_abs']:,}",
-                '样本A占比': f"{anomaly['sample_a_ratio']:.2%}",
-                '样本B占比': f"{anomaly['sample_b_ratio']:.2%}",
+                f"{sample_a_label}绝对值": f"{anomaly['sample_a_abs']:,}",
+                f"{sample_b_label}绝对值": f"{anomaly['sample_b_abs']:,}",
+                f"{sample_a_label}占比": f"{anomaly['sample_a_ratio']:.2%}",
+                f"{sample_b_label}占比": f"{anomaly['sample_b_ratio']:.2%}",
                 '占比变化': change_display,
                 '环比变化': relative_change_display,
                 '风险等级': '⚠️ 中等'
@@ -802,10 +808,10 @@ class ABComparisonAnalyzer:
                 '异常类型': '整体评估',
                 '异常项目': '无异常',
                 '异常子类': '正常',
-                '样本A绝对值': '-',
-                '样本B绝对值': '-',
-                '样本A占比': '-',
-                '样本B占比': '-',
+                f"{sample_a_label}绝对值": '-',
+                f"{sample_b_label}绝对值": '-',
+                f"{sample_a_label}占比": '-',
+                f"{sample_b_label}占比": '-',
                 '占比变化': '-',
                 '环比变化': '-',
                 '风险等级': '✅ 正常'
@@ -820,8 +826,8 @@ class ABComparisonAnalyzer:
         report = f"""# AB对比分析报告
 
 ## 📊 样本信息
-- **样本A**: {sample_a_desc} (共{len(sample_a):,}条记录)
-- **样本B**: {sample_b_desc} (共{len(sample_b):,}条记录)
+- **{sample_a_desc}** (共{len(sample_a):,}条记录)
+- **{sample_b_desc}** (共{len(sample_b):,}条记录)
 - **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## 📈 分析结果统计
@@ -860,72 +866,72 @@ class ABComparisonAnalyzer:
             
             sales_agent_data.append({
                 '指标': '总订单数',
-                '样本A': f"{sample_a_result['total_orders']:,}",
-                '样本B': f"{sample_b_result['total_orders']:,}",
+                sample_a_label: f"{sample_a_result['total_orders']:,}",
+                sample_b_label: f"{sample_b_result['total_orders']:,}",
                 '差异': f"{sample_a_result['total_orders'] - sample_b_result['total_orders']:+,}"
             })
             
             sales_agent_data.append({
                 '指标': '销售代理订单数',
-                '样本A': f"{sample_a_result['agent_orders']:,}",
-                '样本B': f"{sample_b_result['agent_orders']:,}",
+                sample_a_label: f"{sample_a_result['agent_orders']:,}",
+                sample_b_label: f"{sample_b_result['agent_orders']:,}",
                 '差异': f"{sample_a_result['agent_orders'] - sample_b_result['agent_orders']:+,}"
             })
             
             sales_agent_data.append({
                 '指标': '销售代理订单比例',
-                '样本A': f"{sample_a_result['agent_ratio']:.2%}",
-                '样本B': f"{sample_b_result['agent_ratio']:.2%}",
+                sample_a_label: f"{sample_a_result['agent_ratio']:.2%}",
+                sample_b_label: f"{sample_b_result['agent_ratio']:.2%}",
                 '差异': f"{sample_a_result['agent_ratio'] - sample_b_result['agent_ratio']:+.2%}"
             })
             
             sales_agent_data.append({
                 '指标': '重复买家订单数',
-                '样本A': f"{sample_a_result['repeat_buyer_orders']:,}",
-                '样本B': f"{sample_b_result['repeat_buyer_orders']:,}",
+                sample_a_label: f"{sample_a_result['repeat_buyer_orders']:,}",
+                sample_b_label: f"{sample_b_result['repeat_buyer_orders']:,}",
                 '差异': f"{sample_a_result['repeat_buyer_orders'] - sample_b_result['repeat_buyer_orders']:+,}"
             })
             
             sales_agent_data.append({
                 '指标': '重复买家订单比例',
-                '样本A': f"{sample_a_result['repeat_buyer_ratio']:.2%}",
-                '样本B': f"{sample_b_result['repeat_buyer_ratio']:.2%}",
+                sample_a_label: f"{sample_a_result['repeat_buyer_ratio']:.2%}",
+                sample_b_label: f"{sample_b_result['repeat_buyer_ratio']:.2%}",
                 '差异': f"{sample_a_result['repeat_buyer_ratio'] - sample_b_result['repeat_buyer_ratio']:+.2%}"
             })
             
             sales_agent_data.append({
                 '指标': '重复买家数量',
-                '样本A': f"{sample_a_result['unique_repeat_buyers']:,}",
-                '样本B': f"{sample_b_result['unique_repeat_buyers']:,}",
+                sample_a_label: f"{sample_a_result['unique_repeat_buyers']:,}",
+                sample_b_label: f"{sample_b_result['unique_repeat_buyers']:,}",
                 '差异': f"{sample_a_result['unique_repeat_buyers'] - sample_b_result['unique_repeat_buyers']:+,}"
             })
             
             # 新增：身份证号+手机号双重匹配的重复买家指标
             sales_agent_data.append({
                 '指标': '重复买家订单数(身份证+手机)',
-                '样本A': f"{sample_a_result['repeat_buyer_orders_combo']:,}",
-                '样本B': f"{sample_b_result['repeat_buyer_orders_combo']:,}",
+                sample_a_label: f"{sample_a_result['repeat_buyer_orders_combo']:,}",
+                sample_b_label: f"{sample_b_result['repeat_buyer_orders_combo']:,}",
                 '差异': f"{sample_a_result['repeat_buyer_orders_combo'] - sample_b_result['repeat_buyer_orders_combo']:+,}"
             })
             
             sales_agent_data.append({
                 '指标': '重复买家订单比例(身份证+手机)',
-                '样本A': f"{sample_a_result['repeat_buyer_ratio_combo']:.2%}",
-                '样本B': f"{sample_b_result['repeat_buyer_ratio_combo']:.2%}",
+                sample_a_label: f"{sample_a_result['repeat_buyer_ratio_combo']:.2%}",
+                sample_b_label: f"{sample_b_result['repeat_buyer_ratio_combo']:.2%}",
                 '差异': f"{sample_a_result['repeat_buyer_ratio_combo'] - sample_b_result['repeat_buyer_ratio_combo']:+.2%}"
             })
             
             sales_agent_data.append({
                 '指标': '重复买家数量(身份证+手机)',
-                '样本A': f"{sample_a_result['unique_repeat_buyers_combo']:,}",
-                '样本B': f"{sample_b_result['unique_repeat_buyers_combo']:,}",
+                sample_a_label: f"{sample_a_result['unique_repeat_buyers_combo']:,}",
+                sample_b_label: f"{sample_b_result['unique_repeat_buyers_combo']:,}",
                 '差异': f"{sample_a_result['unique_repeat_buyers_combo'] - sample_b_result['unique_repeat_buyers_combo']:+,}"
             })
         else:
             sales_agent_data.append({
                 '指标': '数据获取失败',
-                '样本A': '-',
-                '样本B': '-',
+                sample_a_label: '-',
+                sample_b_label: '-',
                 '差异': '-'
             })
         
@@ -945,22 +951,22 @@ class ABComparisonAnalyzer:
             if refund_a and refund_b:
                 time_interval_data.append({
                     '时间间隔类型': '支付到退款-样本数',
-                    '样本A': f"{refund_a.get('count', 0):,}",
-                    '样本B': f"{refund_b.get('count', 0):,}",
+                    sample_a_label: f"{refund_a.get('count', 0):,}",
+                    sample_b_label: f"{refund_b.get('count', 0):,}",
                     '差异': f"{refund_a.get('count', 0) - refund_b.get('count', 0):+,}"
                 })
                 
                 time_interval_data.append({
                     '时间间隔类型': '支付到退款-平均天数',
-                    '样本A': f"{refund_a.get('mean', 0):.1f}",
-                    '样本B': f"{refund_b.get('mean', 0):.1f}",
+                    sample_a_label: f"{refund_a.get('mean', 0):.1f}",
+                    sample_b_label: f"{refund_b.get('mean', 0):.1f}",
                     '差异': f"{refund_a.get('mean', 0) - refund_b.get('mean', 0):+.1f}"
                 })
                 
                 time_interval_data.append({
                     '时间间隔类型': '支付到退款-中位数天数',
-                    '样本A': f"{refund_a.get('median', 0):.1f}",
-                    '样本B': f"{refund_b.get('median', 0):.1f}",
+                    sample_a_label: f"{refund_a.get('median', 0):.1f}",
+                    sample_b_label: f"{refund_b.get('median', 0):.1f}",
                     '差异': f"{refund_a.get('median', 0) - refund_b.get('median', 0):+.1f}"
                 })
             
@@ -971,22 +977,22 @@ class ABComparisonAnalyzer:
             if assign_a and assign_b:
                 time_interval_data.append({
                     '时间间隔类型': '支付到分配-样本数',
-                    '样本A': f"{assign_a.get('count', 0):,}",
-                    '样本B': f"{assign_b.get('count', 0):,}",
+                    sample_a_label: f"{assign_a.get('count', 0):,}",
+                    sample_b_label: f"{assign_b.get('count', 0):,}",
                     '差异': f"{assign_a.get('count', 0) - assign_b.get('count', 0):+,}"
                 })
                 
                 time_interval_data.append({
                     '时间间隔类型': '支付到分配-平均天数',
-                    '样本A': f"{assign_a.get('mean', 0):.1f}",
-                    '样本B': f"{assign_b.get('mean', 0):.1f}",
+                    sample_a_label: f"{assign_a.get('mean', 0):.1f}",
+                    sample_b_label: f"{assign_b.get('mean', 0):.1f}",
                     '差异': f"{assign_a.get('mean', 0) - assign_b.get('mean', 0):+.1f}"
                 })
                 
                 time_interval_data.append({
                     '时间间隔类型': '支付到分配-中位数天数',
-                    '样本A': f"{assign_a.get('median', 0):.1f}",
-                    '样本B': f"{assign_b.get('median', 0):.1f}",
+                    sample_a_label: f"{assign_a.get('median', 0):.1f}",
+                    sample_b_label: f"{assign_b.get('median', 0):.1f}",
                     '差异': f"{assign_a.get('median', 0) - assign_b.get('median', 0):+.1f}"
                 })
             
@@ -997,30 +1003,30 @@ class ABComparisonAnalyzer:
             if lock_a and lock_b:
                 time_interval_data.append({
                     '时间间隔类型': '支付到锁单-样本数',
-                    '样本A': f"{lock_a.get('count', 0):,}",
-                    '样本B': f"{lock_b.get('count', 0):,}",
+                    sample_a_label: f"{lock_a.get('count', 0):,}",
+                    sample_b_label: f"{lock_b.get('count', 0):,}",
                     '差异': f"{lock_a.get('count', 0) - lock_b.get('count', 0):+,}"
                 })
                 
                 time_interval_data.append({
                     '时间间隔类型': '支付到锁单-平均天数',
-                    '样本A': f"{lock_a.get('mean', 0):.1f}",
-                    '样本B': f"{lock_b.get('mean', 0):.1f}",
+                    sample_a_label: f"{lock_a.get('mean', 0):.1f}",
+                    sample_b_label: f"{lock_b.get('mean', 0):.1f}",
                     '差异': f"{lock_a.get('mean', 0) - lock_b.get('mean', 0):+.1f}"
                 })
                 
                 time_interval_data.append({
                     '时间间隔类型': '支付到锁单-中位数天数',
-                    '样本A': f"{lock_a.get('median', 0):.1f}",
-                    '样本B': f"{lock_b.get('median', 0):.1f}",
+                    sample_a_label: f"{lock_a.get('median', 0):.1f}",
+                    sample_b_label: f"{lock_b.get('median', 0):.1f}",
                     '差异': f"{lock_a.get('median', 0) - lock_b.get('median', 0):+.1f}"
                 })
         
         if not time_interval_data:
             time_interval_data.append({
                 '时间间隔类型': '无有效数据',
-                '样本A': '-',
-                '样本B': '-',
+                sample_a_label: '-',
+                sample_b_label: '-',
                 '差异': '-'
             })
         
@@ -1056,7 +1062,22 @@ def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_
             exclude_locked=exclude_locked_a,
             battery_types=battery_types_a if battery_types_a else None
         )
-        sample_a_desc = f"{start_date_a}至{end_date_a}, 车型:{','.join(vehicle_types_a) if vehicle_types_a else '全部'}, {'仅退订' if refund_only_a else ''}{'仅锁单' if locked_only_a else ''}"
+        # 动态构建样本A名称（不含时间周期，默认或全部不加入）
+        def add_segment(seg_list, title, vals):
+            if vals and not ("全部" in vals or "All" in vals):
+                seg_list.append(f"{title}:{','.join(vals)}")
+
+        segments_a = []
+        add_segment(segments_a, "车型", vehicle_types_a)
+        add_segment(segments_a, "产品", pre_vehicle_model_types_a)
+        add_segment(segments_a, "电池", battery_types_a)
+        add_segment(segments_a, "区域", parent_regions_a)
+        if refund_only_a:
+            segments_a.append("仅退订")
+        if locked_only_a:
+            segments_a.append("仅锁单")
+        sample_a_label = " | ".join(segments_a)
+        sample_a_desc = sample_a_label if sample_a_label else "样本A"
         
         # 筛选样本B
         sample_b = analyzer.filter_sample(
@@ -1073,15 +1094,28 @@ def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_
             exclude_locked=exclude_locked_b,
             battery_types=battery_types_b if battery_types_b else None
         )
-        sample_b_desc = f"{start_date_b}至{end_date_b}, 车型:{','.join(vehicle_types_b) if vehicle_types_b else '全部'}, {'仅退订' if refund_only_b else ''}{'仅锁单' if locked_only_b else ''}"
+        # 动态构建样本B名称（不含时间周期，默认或全部不加入）
+        segments_b = []
+        add_segment(segments_b, "车型", vehicle_types_b)
+        add_segment(segments_b, "产品", pre_vehicle_model_types_b)
+        add_segment(segments_b, "电池", battery_types_b)
+        add_segment(segments_b, "区域", parent_regions_b)
+        if refund_only_b:
+            segments_b.append("仅退订")
+        if locked_only_b:
+            segments_b.append("仅锁单")
+        sample_b_label = " | ".join(segments_b)
+        sample_b_desc = sample_b_label if sample_b_label else "样本B"
         
         if len(sample_a) == 0:
-            empty_df = pd.DataFrame({'错误': ['样本A数据为空，请调整筛选条件']})
-            return "❌ 样本A数据为空，请调整筛选条件", empty_df, empty_df, empty_df
+            name_a = sample_a_label or "样本A"
+            empty_df = pd.DataFrame({'错误': [f"{name_a} 数据为空，请调整筛选条件"]})
+            return f"❌ {name_a} 数据为空，请调整筛选条件", empty_df, empty_df, empty_df
         
         if len(sample_b) == 0:
-            empty_df = pd.DataFrame({'错误': ['样本B数据为空，请调整筛选条件']})
-            return "❌ 样本B数据为空，请调整筛选条件", empty_df, empty_df, empty_df
+            name_b = sample_b_label or "样本B"
+            empty_df = pd.DataFrame({'错误': [f"{name_b} 数据为空，请调整筛选条件"]})
+            return f"❌ {name_b} 数据为空，请调整筛选条件", empty_df, empty_df, empty_df
         
         # 获取Parent Region筛选条件（取两个样本的交集）
         parent_regions_filter = None
@@ -1094,7 +1128,10 @@ def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_
             parent_regions_filter = parent_regions_b
         
         # 生成对比报告
-        report, anomaly_df, sales_agent_df, time_interval_df = analyzer.generate_comparison_report(sample_a, sample_b, sample_a_desc, sample_b_desc, parent_regions_filter)
+        report, anomaly_df, sales_agent_df, time_interval_df = analyzer.generate_comparison_report(
+            sample_a, sample_b, sample_a_desc, sample_b_desc, parent_regions_filter,
+            sample_a_label=sample_a_label, sample_b_label=sample_b_label
+        )
         
         return report, anomaly_df, sales_agent_df, time_interval_df
         
@@ -1268,4 +1305,4 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
         """)
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7865, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=7866, share=False)

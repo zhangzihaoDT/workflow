@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 DATA_PATH = "/Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet"
 BUSINESS_DEF_PATH = "/Users/zihao_/Documents/github/W35_workflow/business_definition.json"
 
+# 统一配色方案
+CUSTOM_COLORS = ['#27AD00', '#005783', '#A3ACB9', '#C8D0D9', '#7B848F']
+
 def get_dynamic_vehicle_data(vehicle_name: str) -> pd.DataFrame:
     """动态获取车型的订单数据"""
     try:
@@ -555,7 +558,7 @@ def create_prediction_plot(target_days):
         x=cm1_df['day'],
         y=cm1_daily,
         name='CM1 每日订单',
-        marker_color='lightblue',
+        marker_color=CUSTOM_COLORS[0],
         opacity=0.8
     ), row=1, col=1)
     
@@ -564,7 +567,7 @@ def create_prediction_plot(target_days):
         x=cm2_df['day'],
         y=cm2_daily_actual,
         name='CM2 实际每日订单',
-        marker_color='lightcoral',
+        marker_color=CUSTOM_COLORS[1],
         opacity=0.8
     ), row=1, col=1)
     
@@ -575,7 +578,7 @@ def create_prediction_plot(target_days):
             x=prediction_days,
             y=cm2_daily_predicted,
             name='CM2 预测每日订单',
-            marker_color='orange',
+            marker_color=CUSTOM_COLORS[2],
             opacity=0.5  # 透明度降低0.5
         ), row=1, col=1)
     
@@ -587,7 +590,7 @@ def create_prediction_plot(target_days):
         y=cm1_df['cumulative_orders'],
         mode='lines+markers',
         name='CM1 累计订单',
-        line=dict(color='blue', width=2),
+        line=dict(color=CUSTOM_COLORS[0], width=2),
         marker=dict(size=4)
     ), row=2, col=1)
     
@@ -600,7 +603,7 @@ def create_prediction_plot(target_days):
         y=actual_cumulative,
         mode='lines+markers',
         name='CM2 实际累计订单',
-        line=dict(color='red', width=2),
+        line=dict(color=CUSTOM_COLORS[1], width=2),
         marker=dict(size=4)
     ), row=2, col=1)
     
@@ -615,7 +618,7 @@ def create_prediction_plot(target_days):
             y=connection_y,
             mode='lines',
             name='',
-            line=dict(color='orange', width=2, dash='dash'),
+            line=dict(color=CUSTOM_COLORS[2], width=2, dash='dash'),
             showlegend=False
         ), row=2, col=1)
         
@@ -624,7 +627,7 @@ def create_prediction_plot(target_days):
             y=prediction_cumulative,
             mode='lines+markers',
             name='CM2 预测累计订单',
-            line=dict(color='orange', width=2, dash='dash'),
+            line=dict(color=CUSTOM_COLORS[2], width=2, dash='dash'),
             marker=dict(size=4)
         ), row=2, col=1)
     
@@ -843,8 +846,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = px.colors.qualitative.Set1
-        
         for i, vehicle in enumerate(data['车型分组'].unique()):
             vehicle_data = data[data['车型分组'] == vehicle]
             
@@ -853,7 +854,7 @@ class OrderTrendMonitor:
                 y=vehicle_data['cumulative_orders'],
                 mode='lines+markers',
                 name=vehicle,
-                line=dict(color=colors[i % len(colors)], width=3),
+                line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=3),
                 marker=dict(size=6),
                 hovertemplate=f'<b>{vehicle}</b><br>' +
                              '第%{x}日<br>' +
@@ -888,8 +889,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = px.colors.qualitative.Set1
-        
         for i, vehicle in enumerate(data['车型分组'].unique()):
             vehicle_data = data[data['车型分组'] == vehicle]
             
@@ -897,7 +896,7 @@ class OrderTrendMonitor:
                 x=vehicle_data['days_from_start'],
                 y=vehicle_data['daily_orders'],
                 name=vehicle,
-                marker_color=colors[i % len(colors)],
+                marker_color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)],
                 opacity=0.8,
                 hovertemplate=f'<b>{vehicle}</b><br>' +
                              '第%{x}日<br>' +
@@ -933,8 +932,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = px.colors.qualitative.Set1
-        
         for i, vehicle in enumerate(data['车型分组'].unique()):
             vehicle_data = data[data['车型分组'] == vehicle]
             # 过滤掉第一天（无法计算环比）
@@ -948,7 +945,7 @@ class OrderTrendMonitor:
                 y=vehicle_data['daily_change_rate'],
                 mode='lines+markers',
                 name=vehicle,
-                line=dict(color=colors[i % len(colors)], width=3),
+                line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=3),
                 marker=dict(size=6),
                 hovertemplate=f'<b>{vehicle}</b><br>' +
                              '第%{x}日<br>' +
@@ -1070,8 +1067,6 @@ class OrderTrendMonitor:
             fig = go.Figure()
             
             # 为每个车型添加折线
-            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
-            
             for i, vehicle in enumerate(selected_vehicles):
                 vehicle_data = conversion_data[conversion_data['车型分组'] == vehicle]
                 
@@ -1094,7 +1089,7 @@ class OrderTrendMonitor:
                         y=vehicle_data['conversion_rate'],
                         mode='lines+markers',
                         name=vehicle,
-                        line=dict(color=colors[i % len(colors)], width=2),
+                        line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=2),
                         marker=dict(size=6),
                         hovertemplate='%{hovertext}<extra></extra>',
                         hovertext=hover_text
@@ -1559,8 +1554,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = px.colors.qualitative.Set1
-        
         for i, vehicle in enumerate(data['车型分组'].unique()):
             vehicle_data = data[data['车型分组'] == vehicle]
             
@@ -1569,7 +1562,7 @@ class OrderTrendMonitor:
                 y=vehicle_data['cumulative_refunds'],
                 mode='lines+markers',
                 name=vehicle,
-                line=dict(color=colors[i % len(colors)], width=3),
+                line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=3),
                 marker=dict(size=6),
                 hovertemplate=f'<b>{vehicle}</b><br>' +
                              '第%{x}日<br>' +
@@ -1604,8 +1597,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = px.colors.qualitative.Set1
-        
         for i, vehicle in enumerate(data['车型分组'].unique()):
             vehicle_data = data[data['车型分组'] == vehicle]
             
@@ -1614,7 +1605,7 @@ class OrderTrendMonitor:
                 y=vehicle_data['refund_rate'],
                 mode='lines+markers',
                 name=vehicle,
-                line=dict(color=colors[i % len(colors)], width=3),
+                line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=3),
                 marker=dict(size=6),
                 hovertemplate=f'<b>{vehicle}</b><br>' +
                              '第%{x}日<br>' +
@@ -1650,8 +1641,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = px.colors.qualitative.Set1
-        
         for i, vehicle in enumerate(data['车型分组'].unique()):
             vehicle_data = data[data['车型分组'] == vehicle]
             
@@ -1660,7 +1649,7 @@ class OrderTrendMonitor:
                 y=vehicle_data['daily_refund_rate'],
                 mode='lines+markers',
                 name=vehicle,
-                line=dict(color=colors[i % len(colors)], width=3),
+                line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=3),
                 marker=dict(size=6),
                 hovertemplate=f'<b>{vehicle}</b><br>' +
                              '第%{x}日<br>' +
@@ -2132,8 +2121,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-        
         for i, vehicle in enumerate(data['vehicle'].unique()):
             vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
             
@@ -2151,7 +2138,7 @@ class OrderTrendMonitor:
                     y=vehicle_data['cumulative_locks'],
                     mode='lines+markers',
                     name=f'{vehicle}',
-                    line=dict(color=colors[i % len(colors)], width=3),
+                    line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=3),
                     marker=dict(size=6),
                     hovertemplate=f'<b>{vehicle}</b><br>' +
                                  '第%{x}日（预售结束当天为第0日）<br>' +
@@ -2196,8 +2183,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-        
         for i, vehicle in enumerate(data['vehicle'].unique()):
             vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
             
@@ -2206,7 +2191,7 @@ class OrderTrendMonitor:
                 y=vehicle_data['conversion_rate'],
                 mode='lines+markers',
                 name=f'{vehicle}',
-                line=dict(color=colors[i % len(colors)], width=3),
+                line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=3),
                 marker=dict(size=6),
                 hovertemplate=f'<b>{vehicle}</b><br>' +
                              '第%{x}日（预售结束当天为第0日）<br>' +
@@ -2251,8 +2236,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-        
         for i, vehicle in enumerate(data['vehicle'].unique()):
             vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
             
@@ -2260,7 +2243,7 @@ class OrderTrendMonitor:
                 x=vehicle_data['days_from_end'],
                 y=vehicle_data['daily_locks'],
                 name=f'{vehicle}',
-                marker_color=colors[i % len(colors)],
+                marker_color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)],
                 opacity=0.8,
                 hovertemplate=f'<b>{vehicle}</b><br>' +
                              '第%{x}日（预售结束当天为第0日）<br>' +
@@ -2341,8 +2324,6 @@ class OrderTrendMonitor:
             )
             return fig
         
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-        
         for i, vehicle in enumerate(data['vehicle'].unique()):
             vehicle_data = data[data['vehicle'] == vehicle].sort_values('days_from_end')
             
@@ -2358,7 +2339,7 @@ class OrderTrendMonitor:
                     y=vehicle_data['change_rate'],
                     mode='lines+markers',
                     name=f'{vehicle}',
-                    line=dict(color=colors[i % len(colors)], width=3),
+                    line=dict(color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)], width=3),
                     marker=dict(size=6),
                     hovertemplate=f'<b>{vehicle}</b><br>' +
                                  '第%{x}日（预售结束当天为第0日）<br>' +
@@ -3930,13 +3911,11 @@ class OrderTrendMonitor:
             )
             
             # 颜色映射
-            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-            
             vehicles = data['车型'].unique()
             
             for i, vehicle in enumerate(vehicles):
                 vehicle_data = data[data['车型'] == vehicle].sort_values('交付日期')
-                color = colors[i % len(colors)]
+                color = CUSTOM_COLORS[i % len(CUSTOM_COLORS)]
                 
                 # 过滤掉交付数量为0或空的数据点
                 delivery_data = vehicle_data[
@@ -4428,7 +4407,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                 with gr.Column(scale=1):
                     refund_n_days = gr.Number(
                         label="预售发布会后第N日",
-                        value=44,
+                        value=79,
                         minimum=1,
                         maximum=100,
                         step=1,
@@ -4953,7 +4932,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
 if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
-        server_port=7862,
+        server_port=7867,
         share=False,
         show_error=True
     )
