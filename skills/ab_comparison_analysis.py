@@ -12,6 +12,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any
 import logging
 from pathlib import Path
+# 兼容直接运行与包运行两种方式的导入
+try:
+    from id_card_validator import validate_id_card
+except Exception:
+    try:
+        from skills.id_card_validator import validate_id_card
+    except Exception:
+        from .id_card_validator import validate_id_card
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -140,6 +148,7 @@ class ABComparisonAnalyzer:
                      locked_only: bool = False, order_create_start_date: str = '', order_create_end_date: str = '',
                      lock_start_date: str = '', lock_end_date: str = '',
                      exclude_refund: bool = False, exclude_locked: bool = False,
+                     include_invalid_id: bool = True,
                      battery_types: List[str] = None) -> pd.DataFrame:
         """筛选样本数据"""
         # 从完整数据开始
@@ -195,6 +204,13 @@ class ABComparisonAnalyzer:
             mask = mask & product_mask
         
         # 6. Parent Region Name筛选
+        # 5.1 身份证号合法性筛选（仅在提供 Buyer Identity No 字段时生效）
+        if (not include_invalid_id) and ('Buyer Identity No' in self.df.columns):
+            id_series = self.df['Buyer Identity No']
+            # 保留合法身份证或缺失值/空值；剔除非法格式或校验失败
+            validity_mask = id_series.isna() | id_series.astype(str).str.strip().eq('') | id_series.astype(str).apply(validate_id_card)
+            mask = mask & validity_mask
+        
         if parent_regions and 'Parent Region Name' in self.df.columns:
             mask = mask & (self.df['Parent Region Name'].isin(parent_regions))
         
@@ -1039,11 +1055,11 @@ analyzer = ABComparisonAnalyzer()
 
 def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_a, 
                        order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
-                       pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a, refund_only_a, locked_only_a,
+                       pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a, include_invalid_id_a, refund_only_a, locked_only_a,
                        exclude_refund_a, exclude_locked_a, battery_types_a,
                        start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
                        order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
-                       pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b, refund_only_b, locked_only_b,
+                       pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b, include_invalid_id_b, refund_only_b, locked_only_b,
                        exclude_refund_b, exclude_locked_b, battery_types_b):
     """执行AB对比分析"""
     try:
@@ -1060,6 +1076,7 @@ def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_
             locked_only=locked_only_a,
             exclude_refund=exclude_refund_a,
             exclude_locked=exclude_locked_a,
+            include_invalid_id=include_invalid_id_a,
             battery_types=battery_types_a if battery_types_a else None
         )
         # 动态构建样本A名称（不含时间周期，默认或全部不加入）
@@ -1092,6 +1109,7 @@ def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_
             locked_only=locked_only_b,
             exclude_refund=exclude_refund_b,
             exclude_locked=exclude_locked_b,
+            include_invalid_id=include_invalid_id_b,
             battery_types=battery_types_b if battery_types_b else None
         )
         # 动态构建样本B名称（不含时间周期，默认或全部不加入）
@@ -1187,6 +1205,7 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
             # 添加电池类型选择组件
             battery_types = analyzer.get_battery_types()
             battery_types_a = gr.CheckboxGroup(choices=battery_types, label="电池类型分类", value=[])
+            include_invalid_id_a = gr.Checkbox(label="包含非法身份证号", value=True)
             parent_regions_a = gr.Dropdown(choices=parent_regions, label="Parent Region Name", multiselect=True, value=None)
             vehicle_types_a = gr.CheckboxGroup(choices=vehicle_types, label="车型选择", value=[])
             refund_only_a = gr.Checkbox(label="仅退订数据", value=False)
@@ -1225,6 +1244,7 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
             
             # 添加电池类型选择组件
             battery_types_b = gr.CheckboxGroup(choices=battery_types, label="电池类型分类", value=[])
+            include_invalid_id_b = gr.Checkbox(label="包含非法身份证号", value=True)
             parent_regions_b = gr.Dropdown(choices=parent_regions, label="Parent Region Name", multiselect=True, value=None)
             vehicle_types_b = gr.CheckboxGroup(choices=vehicle_types, label="车型选择", value=[])
             refund_only_b = gr.Checkbox(label="仅退订数据", value=False)
@@ -1238,7 +1258,7 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
     with gr.Row():
         with gr.Column(scale=1):
             output = gr.Markdown(label="分析结果")
-        with gr.Column(scale=2):
+        with gr.Column(scale=4):
             anomaly_table = gr.DataFrame(
                 label="异常数据详情",
                 interactive=False,
@@ -1266,11 +1286,11 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
         inputs=[
             start_date_a, end_date_a, refund_start_date_a, refund_end_date_a,
             order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
-            pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a,
+            pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a, include_invalid_id_a,
             refund_only_a, locked_only_a, exclude_refund_a, exclude_locked_a, battery_types_a,
             start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
             order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
-            pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b,
+            pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b, include_invalid_id_b,
             refund_only_b, locked_only_b, exclude_refund_b, exclude_locked_b, battery_types_b
         ],
         outputs=[output, anomaly_table, sales_agent_table, time_interval_table]

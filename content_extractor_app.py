@@ -153,7 +153,7 @@ class AIQARetriever:
             return ""
     
     def _call_deepseek_api(self, messages: List[Dict[str, str]]) -> str:
-        """调用DeepSeek API"""
+        """调用DeepSeek API，包含重试机制"""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -166,15 +166,31 @@ class AIQARetriever:
             "max_tokens": 2000
         }
         
-        try:
-            response = requests.post(self.base_url, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
-            
-            result = response.json()
-            return result['choices'][0]['message']['content']
-            
-        except Exception as e:
-            return f"API调用失败: {str(e)}"
+        # 重试机制
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # 增加超时时间到60秒
+                response = requests.post(self.base_url, headers=headers, json=payload, timeout=60)
+                response.raise_for_status()
+                
+                result = response.json()
+                return result['choices'][0]['message']['content']
+                
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    print(f"⚠️ API调用超时，正在重试 ({attempt + 1}/{max_retries})...")
+                    time.sleep(2)  # 等待2秒后重试
+                    continue
+                else:
+                    return f"API调用失败: 连接超时，已重试{max_retries}次"
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"⚠️ API调用出错，正在重试 ({attempt + 1}/{max_retries}): {str(e)}")
+                    time.sleep(2)  # 等待2秒后重试
+                    continue
+                else:
+                    return f"API调用失败: {str(e)}"
     
     def search_and_answer(self, question: str, start_date: str = None, end_date: str = None, progress=gr.Progress()) -> Tuple[str, str, str]:
         """
@@ -221,8 +237,8 @@ class AIQARetriever:
 4. 分析要客观中立，避免主观偏见
 5. 回答要结构清晰，便于理解"""
         
-        # 分批处理内容，避免单次请求过大
-        batch_size = 20
+        # 分批处理内容，避免单次请求过大 - "一目十行"
+        batch_size = 10
         total_batches = (len(self.posts_data) + batch_size - 1) // batch_size
         
         relevant_contents = []
