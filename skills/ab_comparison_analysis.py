@@ -149,7 +149,7 @@ class ABComparisonAnalyzer:
                      lock_start_date: str = '', lock_end_date: str = '',
                      exclude_refund: bool = False, exclude_locked: bool = False,
                      include_invalid_id: bool = True,
-                     battery_types: List[str] = None) -> pd.DataFrame:
+                     battery_types: List[str] = None, repeat_buyer_only: bool = False, exclude_repeat_buyer: bool = False) -> pd.DataFrame:
         """筛选样本数据"""
         # 从完整数据开始
         mask = pd.Series([True] * len(self.df), index=self.df.index)
@@ -204,11 +204,20 @@ class ABComparisonAnalyzer:
             mask = mask & product_mask
         
         # 6. Parent Region Name筛选
-        # 5.1 身份证号合法性筛选（仅在提供 Buyer Identity No 字段时生效）
+        # 5.1 身份证号异常检测（仅在提供 Buyer Identity No 字段时生效）
         if (not include_invalid_id) and ('Buyer Identity No' in self.df.columns):
             id_series = self.df['Buyer Identity No']
-            # 保留合法身份证或缺失值/空值；剔除非法格式或校验失败
-            validity_mask = id_series.isna() | id_series.astype(str).str.strip().eq('') | id_series.astype(str).apply(validate_id_card)
+            # 检测异常身份证号：空值、长度不足18位、校验失败
+            def is_valid_id_card(id_val):
+                if pd.isna(id_val):
+                    return False  # 空值视为异常
+                id_str = str(id_val).strip()
+                if id_str == '' or len(id_str) != 18:
+                    return False  # 空字符串或长度不足18位视为异常
+                return validate_id_card(id_str)  # 校验失败视为异常
+            
+            # 保留正常身份证号，剔除异常身份证号
+            validity_mask = id_series.apply(is_valid_id_card)
             mask = mask & validity_mask
         
         if parent_regions and 'Parent Region Name' in self.df.columns:
@@ -250,6 +259,45 @@ class ABComparisonAnalyzer:
         # 11. 排除锁单数据
         if exclude_locked and 'Lock_Time' in self.df.columns:
             sample_data = sample_data[sample_data['Lock_Time'].isna()]
+        
+        # 12. 复购用户筛选
+        if (repeat_buyer_only or exclude_repeat_buyer) and 'Buyer Identity No' in self.df.columns and 'Invoice_Upload_Time' in self.df.columns:
+            # 检查互斥性：如果同时设置两个选项，返回空结果
+            if repeat_buyer_only and exclude_repeat_buyer:
+                # 同时设置两个选项时返回空DataFrame
+                sample_data = sample_data.iloc[0:0]  # 返回空DataFrame但保持列结构
+            else:
+                # 复购用户的判断标准：
+                # 1. 一个买家有多个订单（基于身份证号）
+                # 2. 且这批订单中含有"Invoice_Upload_Time"
+                # 3. 并且，该"Invoice_Upload_Time"还应该<用户控件选择的"锁单开始日期"
+                
+                # 获取锁单开始日期，如果没有提供则使用当前筛选的开始日期
+                reference_date = lock_start_date if lock_start_date else start_date
+                
+                if reference_date:
+                    # 找出复购用户的身份证号
+                    repeat_buyer_ids = set()
+                    
+                    # 按身份证号分组，找出有多个订单的买家
+                    buyer_groups = self.df.groupby('Buyer Identity No')
+                    for buyer_id, group in buyer_groups:
+                        if len(group) > 1:  # 有多个订单
+                            # 检查是否有Invoice_Upload_Time且早于参考日期
+                            invoice_times = group['Invoice_Upload_Time'].dropna()
+                            if len(invoice_times) > 0:
+                                # 检查是否有Invoice_Upload_Time早于参考日期
+                                early_invoices = invoice_times[invoice_times < reference_date]
+                                if len(early_invoices) > 0:
+                                    repeat_buyer_ids.add(buyer_id)
+                    
+                    # 根据选择的模式进行筛选
+                    if repeat_buyer_only and repeat_buyer_ids:
+                        # 仅保留复购用户
+                        sample_data = sample_data[sample_data['Buyer Identity No'].isin(repeat_buyer_ids)]
+                    elif exclude_repeat_buyer and repeat_buyer_ids:
+                        # 排除复购用户
+                        sample_data = sample_data[~sample_data['Buyer Identity No'].isin(repeat_buyer_ids)]
         
         return sample_data
     
@@ -614,7 +662,7 @@ class ABComparisonAnalyzer:
             
             def analyze_sample_sales_agent(sample_df):
                 if len(sample_df) == 0:
-                    return {'total_orders': 0, 'agent_orders': 0, 'agent_ratio': 0.0, 'repeat_buyer_orders': 0, 'repeat_buyer_ratio': 0.0, 'unique_repeat_buyers': 0}
+                    return {'total_orders': 0, 'total_unique_buyers': 0, 'agent_orders': 0, 'agent_ratio': 0.0, 'repeat_buyer_orders': 0, 'repeat_buyer_ratio': 0.0, 'unique_repeat_buyers': 0, 'repeat_buyer_orders_combo': 0, 'repeat_buyer_ratio_combo': 0.0, 'unique_repeat_buyers_combo': 0}
                 
                 # 预处理字段
                 sample_df = sample_df.copy()
@@ -643,6 +691,9 @@ class ABComparisonAnalyzer:
                 repeat_buyer_ratio = repeat_buyer_orders / total_orders if total_orders > 0 else 0.0
                 unique_repeat_buyers = len(repeat_buyers)
                 
+                # 计算总买家数量（基于身份证号）
+                total_unique_buyers = sample_df['Buyer Identity No'].nunique()
+                
                 # 重复买家分析 - 口径2：身份证号+手机号双重匹配
                 # 创建身份证号+手机号的组合键
                 sample_df_clean = sample_df.dropna(subset=['Buyer Identity No', 'Buyer Cell Phone'])
@@ -655,6 +706,7 @@ class ABComparisonAnalyzer:
                 
                 return {
                     'total_orders': total_orders,
+                    'total_unique_buyers': total_unique_buyers,
                     'agent_orders': agent_orders,
                     'agent_ratio': agent_ratio,
                     'repeat_buyer_orders': repeat_buyer_orders,
@@ -888,6 +940,13 @@ class ABComparisonAnalyzer:
             })
             
             sales_agent_data.append({
+                '指标': '买家数量',
+                sample_a_label: f"{sample_a_result['total_unique_buyers']:,}",
+                sample_b_label: f"{sample_b_result['total_unique_buyers']:,}",
+                '差异': f"{sample_a_result['total_unique_buyers'] - sample_b_result['total_unique_buyers']:+,}"
+            })
+            
+            sales_agent_data.append({
                 '指标': '销售代理订单数',
                 sample_a_label: f"{sample_a_result['agent_orders']:,}",
                 sample_b_label: f"{sample_b_result['agent_orders']:,}",
@@ -1056,11 +1115,11 @@ analyzer = ABComparisonAnalyzer()
 def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_a, 
                        order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
                        pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a, include_invalid_id_a, refund_only_a, locked_only_a,
-                       exclude_refund_a, exclude_locked_a, battery_types_a,
+                       exclude_refund_a, exclude_locked_a, battery_types_a, repeat_buyer_only_a, exclude_repeat_buyer_a,
                        start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
                        order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
                        pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b, include_invalid_id_b, refund_only_b, locked_only_b,
-                       exclude_refund_b, exclude_locked_b, battery_types_b):
+                       exclude_refund_b, exclude_locked_b, battery_types_b, repeat_buyer_only_b, exclude_repeat_buyer_b):
     """执行AB对比分析"""
     try:
         # 筛选样本A
@@ -1077,7 +1136,9 @@ def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_
             exclude_refund=exclude_refund_a,
             exclude_locked=exclude_locked_a,
             include_invalid_id=include_invalid_id_a,
-            battery_types=battery_types_a if battery_types_a else None
+            battery_types=battery_types_a if battery_types_a else None,
+            repeat_buyer_only=repeat_buyer_only_a,
+            exclude_repeat_buyer=exclude_repeat_buyer_a
         )
         # 动态构建样本A名称（不含时间周期，默认或全部不加入）
         def add_segment(seg_list, title, vals):
@@ -1110,7 +1171,9 @@ def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_
             exclude_refund=exclude_refund_b,
             exclude_locked=exclude_locked_b,
             include_invalid_id=include_invalid_id_b,
-            battery_types=battery_types_b if battery_types_b else None
+            battery_types=battery_types_b if battery_types_b else None,
+            repeat_buyer_only=repeat_buyer_only_b,
+            exclude_repeat_buyer=exclude_repeat_buyer_b
         )
         # 动态构建样本B名称（不含时间周期，默认或全部不加入）
         segments_b = []
@@ -1205,9 +1268,11 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
             # 添加电池类型选择组件
             battery_types = analyzer.get_battery_types()
             battery_types_a = gr.CheckboxGroup(choices=battery_types, label="电池类型分类", value=[])
-            include_invalid_id_a = gr.Checkbox(label="包含非法身份证号", value=True)
             parent_regions_a = gr.Dropdown(choices=parent_regions, label="Parent Region Name", multiselect=True, value=None)
             vehicle_types_a = gr.CheckboxGroup(choices=vehicle_types, label="车型选择", value=[])
+            include_invalid_id_a = gr.Checkbox(label="包含异常身份证号", value=True)
+            repeat_buyer_only_a = gr.Checkbox(label="仅复购用户", value=False)
+            exclude_repeat_buyer_a = gr.Checkbox(label="排除复购用户", value=False)
             refund_only_a = gr.Checkbox(label="仅退订数据", value=False)
             locked_only_a = gr.Checkbox(label="仅锁单数据", value=False)
             exclude_refund_a = gr.Checkbox(label="排除退订数据", value=False)
@@ -1244,9 +1309,11 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
             
             # 添加电池类型选择组件
             battery_types_b = gr.CheckboxGroup(choices=battery_types, label="电池类型分类", value=[])
-            include_invalid_id_b = gr.Checkbox(label="包含非法身份证号", value=True)
             parent_regions_b = gr.Dropdown(choices=parent_regions, label="Parent Region Name", multiselect=True, value=None)
             vehicle_types_b = gr.CheckboxGroup(choices=vehicle_types, label="车型选择", value=[])
+            include_invalid_id_b = gr.Checkbox(label="包含异常身份证号", value=True)
+            repeat_buyer_only_b = gr.Checkbox(label="仅复购用户", value=False)
+            exclude_repeat_buyer_b = gr.Checkbox(label="排除复购用户", value=False)
             refund_only_b = gr.Checkbox(label="仅退订数据", value=False)
             locked_only_b = gr.Checkbox(label="仅锁单数据", value=False)
             exclude_refund_b = gr.Checkbox(label="排除退订数据", value=False)
@@ -1271,7 +1338,8 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
             sales_agent_table = gr.DataFrame(
                 label="销售代理分析对比",
                 interactive=False,
-                wrap=True
+                wrap=True,
+                datatype=["str", "str", "str", "html"]
             )
         with gr.Column(scale=1):
             time_interval_table = gr.DataFrame(
@@ -1287,11 +1355,11 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
             start_date_a, end_date_a, refund_start_date_a, refund_end_date_a,
             order_create_start_date_a, order_create_end_date_a, lock_start_date_a, lock_end_date_a,
             pre_vehicle_model_types_a, parent_regions_a, vehicle_types_a, include_invalid_id_a,
-            refund_only_a, locked_only_a, exclude_refund_a, exclude_locked_a, battery_types_a,
+            refund_only_a, locked_only_a, exclude_refund_a, exclude_locked_a, battery_types_a, repeat_buyer_only_a, exclude_repeat_buyer_a,
             start_date_b, end_date_b, refund_start_date_b, refund_end_date_b,
             order_create_start_date_b, order_create_end_date_b, lock_start_date_b, lock_end_date_b,
             pre_vehicle_model_types_b, parent_regions_b, vehicle_types_b, include_invalid_id_b,
-            refund_only_b, locked_only_b, exclude_refund_b, exclude_locked_b, battery_types_b
+            refund_only_b, locked_only_b, exclude_refund_b, exclude_locked_b, battery_types_b, repeat_buyer_only_b, exclude_repeat_buyer_b
         ],
         outputs=[output, anomaly_table, sales_agent_table, time_interval_table]
     )
