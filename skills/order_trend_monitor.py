@@ -3822,15 +3822,14 @@ class OrderTrendMonitor:
                             ])
             
             # 产品分类筛选
-            if product_types and 'Product Name' in lock_data.columns and hasattr(self, 'business_def'):
+            if product_types and 'Product Name' in lock_data.columns:
                 filtered_products = []
-                for vehicle in selected_vehicles:
-                    if vehicle in self.business_def and 'products' in self.business_def[vehicle]:
-                        for product, info in self.business_def[vehicle]['products'].items():
-                            # 检查产品类型是否在筛选列表中
-                            product_category = info.get('category', '')
-                            if any(ptype in product_category for ptype in product_types):
-                                filtered_products.append(product)
+                unique_products = lock_data['Product Name'].unique()
+                
+                for product in unique_products:
+                    product_category = self.get_product_type(product)
+                    if product_category in product_types:
+                        filtered_products.append(product)
                 
                 if filtered_products:
                     lock_data = lock_data[lock_data['Product Name'].isin(filtered_products)]
@@ -4074,15 +4073,14 @@ class OrderTrendMonitor:
                             ])
             
             # 产品分类筛选
-            if product_types and 'Product Name' in lock_data.columns and hasattr(self, 'business_def'):
+            if product_types and 'Product Name' in lock_data.columns:
                 filtered_products = []
-                for vehicle in selected_vehicles:
-                    if vehicle in self.business_def and 'products' in self.business_def[vehicle]:
-                        for product, info in self.business_def[vehicle]['products'].items():
-                            # 检查产品类型是否在筛选列表中
-                            product_category = info.get('category', '')
-                            if any(ptype in product_category for ptype in product_types):
-                                filtered_products.append(product)
+                unique_products = lock_data['Product Name'].unique()
+                
+                for product in unique_products:
+                    product_category = self.get_product_type(product)
+                    if product_category in product_types:
+                        filtered_products.append(product)
                 
                 if filtered_products:
                     lock_data = lock_data[lock_data['Product Name'].isin(filtered_products)]
@@ -4917,7 +4915,7 @@ def update_config_table(selected_vehicles, start_date, end_date, product_categor
         
         # 准备License City锁单数据
         city_data = monitor.prepare_city_lock_data(
-            selected_vehicles, start_date, end_date, lock_start_date, lock_end_date, lock_n_days, product_categories, weekend_lock_filter, min_lock_count, max_lock_count, include_repeat_buyers, include_repeat_buyers_combo
+            selected_vehicles, start_date, end_date, lock_start_date, lock_end_date, lock_n_days, product_categories, weekend_lock_filter, min_lock_count, max_lock_count, include_repeat_buyers, include_repeat_buyers_combo, city_levels
         )
         city_table = monitor.create_city_lock_table(city_data)
         
@@ -5290,7 +5288,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                             )
                             config_province_lock_max = gr.Number(
                                 label="最大锁单数",
-                                value=1000,
+                                value=2000,
                                 minimum=0,
                                 step=1,
                                 scale=1
@@ -5313,7 +5311,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                             )
                             config_city_lock_max = gr.Number(
                                 label="最大锁单数",
-                                value=1000,
+                                value=2000,
                                 minimum=0,
                                 step=1,
                                 scale=1

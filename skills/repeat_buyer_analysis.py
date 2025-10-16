@@ -11,6 +11,14 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from ab_comparison_analysis import ABComparisonAnalyzer
+# 导入身份证验证函数
+try:
+    from id_card_validator import validate_id_card
+except Exception:
+    try:
+        from skills.id_card_validator import validate_id_card
+    except Exception:
+        from .id_card_validator import validate_id_card
 
 def test_new_repeat_buyer_feature():
     """测试新的复购用户筛选功能"""
@@ -184,7 +192,7 @@ def get_specific_order_list():
                 print(f"\n... 还有{len(order_list) - 20}条记录未显示")
             
             # 保存到CSV文件
-            output_file = 'cm2_specific_orders.csv'
+            output_file = 'report/cm2_specific_orders.csv'
             order_list.to_csv(output_file, index=False, encoding='utf-8-sig')
             print(f"\n💾 完整订单清单已保存到: {output_file}")
             
@@ -235,7 +243,7 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     print(f"🚗 车型筛选: {vehicle_type}")
     
     # 确保必要的列存在
-    required_columns = ['Buyer Identity No', 'Invoice_Upload_Time', 'Order Number', 'Lock_Time', '车型分组']
+    required_columns = ['Buyer Identity No', 'Buyer Cell Phone', 'Invoice_Upload_Time', 'Order Number', 'Lock_Time', '车型分组']
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         print(f"❌ 缺少必要的列: {missing_columns}")
@@ -249,6 +257,25 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     # 过滤掉身份证号为空的记录
     df = df[df['Buyer Identity No'] != '']
     print(f"📊 过滤空身份证号后数据量: {len(df):,} 条记录")
+    
+    # 异常身份证号剔除逻辑（参考ab_comparison_analysis.py）
+    print("🔍 开始剔除异常身份证号...")
+    def is_valid_id_card(id_val):
+        if pd.isna(id_val):
+            return False  # 空值视为异常
+        id_str = str(id_val).strip()
+        if id_str == '' or len(id_str) != 18:
+            return False  # 空字符串或长度不足18位视为异常
+        return validate_id_card(id_str)  # 校验失败视为异常
+    
+    # 保留正常身份证号，剔除异常身份证号
+    original_count = len(df)
+    validity_mask = df['Buyer Identity No'].apply(is_valid_id_card)
+    df = df[validity_mask]
+    filtered_count = len(df)
+    removed_count = original_count - filtered_count
+    print(f"📊 剔除异常身份证号后数据量: {filtered_count:,} 条记录")
+    print(f"📊 剔除异常身份证号数量: {removed_count:,} 条记录 ({removed_count/original_count*100:.2f}%)")
     
     # 复购用户识别逻辑（基于现有代码的逻辑）
     print("\n🔍 识别复购用户...")
@@ -327,7 +354,7 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     print(f"  - 早期订单: {len(result_df[result_df['订单类型'] == '早期订单']):,}")
     
     # 选择输出列
-    output_columns = ['Buyer Identity No', 'Order Number', 'Lock_Time', '车型分组', 'Invoice_Upload_Time', '订单类型']
+    output_columns = ['Buyer Identity No', 'Buyer Cell Phone', 'Order Number', 'Lock_Time', '车型分组', 'Invoice_Upload_Time', '订单类型']
     result_df = result_df[output_columns].copy()
     
     # 按买家身份证号和锁单时间排序
