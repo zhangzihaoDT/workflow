@@ -141,6 +141,60 @@ class ABComparisonAnalyzer:
         order_min, order_max = self.get_date_range()
         return order_min, order_max
     
+    def identify_repeat_buyers(self, reference_date: str = None, use_combo_key: bool = False) -> set:
+        """
+        统一的复购用户识别方法
+        
+        Args:
+            reference_date: 参考日期，用于判断早期订单
+            use_combo_key: 是否使用身份证号+手机号组合键
+            
+        Returns:
+            复购用户的身份证号集合（或组合键集合）
+        """
+        repeat_buyer_ids = set()
+        
+        if 'Buyer Identity No' not in self.df.columns:
+            return repeat_buyer_ids
+        
+        # 根据是否使用组合键选择分组字段
+        if use_combo_key and 'Buyer Cell Phone' in self.df.columns:
+            # 使用身份证号+手机号组合键
+            df_clean = self.df.dropna(subset=['Buyer Identity No', 'Buyer Cell Phone']).copy()
+            df_clean['buyer_key'] = df_clean['Buyer Identity No'].astype(str) + '_' + df_clean['Buyer Cell Phone'].astype(str)
+            buyer_groups = df_clean.groupby('buyer_key')
+            
+            for buyer_key, group in buyer_groups:
+                if len(group) > 1:  # 有多个订单
+                    if reference_date and 'Invoice_Upload_Time' in self.df.columns:
+                        # 检查是否有Invoice_Upload_Time且早于参考日期
+                        invoice_times = group['Invoice_Upload_Time'].dropna()
+                        if len(invoice_times) > 0:
+                            early_invoices = invoice_times[invoice_times < reference_date]
+                            if len(early_invoices) > 0:
+                                repeat_buyer_ids.add(buyer_key)
+                    else:
+                        # 不考虑时间条件，直接认定为复购用户
+                        repeat_buyer_ids.add(buyer_key)
+        else:
+            # 仅使用身份证号
+            buyer_groups = self.df.groupby('Buyer Identity No')
+            
+            for buyer_id, group in buyer_groups:
+                if len(group) > 1:  # 有多个订单
+                    if reference_date and 'Invoice_Upload_Time' in self.df.columns:
+                        # 检查是否有Invoice_Upload_Time且早于参考日期
+                        invoice_times = group['Invoice_Upload_Time'].dropna()
+                        if len(invoice_times) > 0:
+                            early_invoices = invoice_times[invoice_times < reference_date]
+                            if len(early_invoices) > 0:
+                                repeat_buyer_ids.add(buyer_id)
+                    else:
+                        # 不考虑时间条件，直接认定为复购用户
+                        repeat_buyer_ids.add(buyer_id)
+        
+        return repeat_buyer_ids
+    
     def filter_sample(self, start_date: str = '', end_date: str = '', vehicle_types: List[str] = None, 
                      include_refund: bool = False, refund_start_date: str = '', refund_end_date: str = '',
                      pre_vehicle_model_types: List[str] = None, parent_regions: List[str] = None,
@@ -183,18 +237,16 @@ class ABComparisonAnalyzer:
             
             for category in pre_vehicle_model_types:
                 if category == "增程":
-                    # 产品名称中包含"新一代"和数字52或66的为增程
+                    # 统一的增程判断逻辑：对于"新一代"和非"新一代"产品，都根据数字52或66判断
                     category_mask = (
-                        self.df['Product Name'].str.contains('新一代', na=False) & 
-                        (self.df['Product Name'].str.contains('52', na=False) | 
-                         self.df['Product Name'].str.contains('66', na=False))
+                        self.df['Product Name'].str.contains('52', na=False) | 
+                        self.df['Product Name'].str.contains('66', na=False)
                     )
                 elif category == "纯电":
-                    # 其他产品为纯电
+                    # 统一的纯电判断逻辑：不包含数字52或66的产品为纯电
                     category_mask = ~(
-                        self.df['Product Name'].str.contains('新一代', na=False) & 
-                        (self.df['Product Name'].str.contains('52', na=False) | 
-                         self.df['Product Name'].str.contains('66', na=False))
+                        self.df['Product Name'].str.contains('52', na=False) | 
+                        self.df['Product Name'].str.contains('66', na=False)
                     )
                 else:
                     category_mask = pd.Series([False] * len(self.df), index=self.df.index)
@@ -261,43 +313,25 @@ class ABComparisonAnalyzer:
             sample_data = sample_data[sample_data['Lock_Time'].isna()]
         
         # 12. 复购用户筛选
-        if (repeat_buyer_only or exclude_repeat_buyer) and 'Buyer Identity No' in self.df.columns and 'Invoice_Upload_Time' in self.df.columns:
+        if (repeat_buyer_only or exclude_repeat_buyer) and 'Buyer Identity No' in self.df.columns:
             # 检查互斥性：如果同时设置两个选项，返回空结果
             if repeat_buyer_only and exclude_repeat_buyer:
                 # 同时设置两个选项时返回空DataFrame
                 sample_data = sample_data.iloc[0:0]  # 返回空DataFrame但保持列结构
             else:
-                # 复购用户的判断标准：
-                # 1. 一个买家有多个订单（基于身份证号）
-                # 2. 且这批订单中含有"Invoice_Upload_Time"
-                # 3. 并且，该"Invoice_Upload_Time"还应该<用户控件选择的"锁单开始日期"
-                
                 # 获取锁单开始日期，如果没有提供则使用当前筛选的开始日期
                 reference_date = lock_start_date if lock_start_date else start_date
                 
-                if reference_date:
-                    # 找出复购用户的身份证号
-                    repeat_buyer_ids = set()
-                    
-                    # 按身份证号分组，找出有多个订单的买家
-                    buyer_groups = self.df.groupby('Buyer Identity No')
-                    for buyer_id, group in buyer_groups:
-                        if len(group) > 1:  # 有多个订单
-                            # 检查是否有Invoice_Upload_Time且早于参考日期
-                            invoice_times = group['Invoice_Upload_Time'].dropna()
-                            if len(invoice_times) > 0:
-                                # 检查是否有Invoice_Upload_Time早于参考日期
-                                early_invoices = invoice_times[invoice_times < reference_date]
-                                if len(early_invoices) > 0:
-                                    repeat_buyer_ids.add(buyer_id)
-                    
-                    # 根据选择的模式进行筛选
-                    if repeat_buyer_only and repeat_buyer_ids:
-                        # 仅保留复购用户
-                        sample_data = sample_data[sample_data['Buyer Identity No'].isin(repeat_buyer_ids)]
-                    elif exclude_repeat_buyer and repeat_buyer_ids:
-                        # 排除复购用户
-                        sample_data = sample_data[~sample_data['Buyer Identity No'].isin(repeat_buyer_ids)]
+                # 使用统一的复购用户识别方法
+                repeat_buyer_ids = self.identify_repeat_buyers(reference_date=reference_date, use_combo_key=False)
+                
+                # 根据选择的模式进行筛选
+                if repeat_buyer_only and repeat_buyer_ids:
+                    # 仅保留复购用户
+                    sample_data = sample_data[sample_data['Buyer Identity No'].isin(repeat_buyer_ids)]
+                elif exclude_repeat_buyer and repeat_buyer_ids:
+                    # 排除复购用户
+                    sample_data = sample_data[~sample_data['Buyer Identity No'].isin(repeat_buyer_ids)]
         
         return sample_data
     
@@ -634,7 +668,10 @@ class ABComparisonAnalyzer:
         
         return anomalies
     
-    def analyze_sales_agent_comparison(self, sample_a: pd.DataFrame, sample_b: pd.DataFrame) -> List[Dict]:
+    def analyze_sales_agent_comparison(self, sample_a: pd.DataFrame, sample_b: pd.DataFrame, 
+                                     repeat_buyer_only_a: bool = False, exclude_repeat_buyer_a: bool = False,
+                                     repeat_buyer_only_b: bool = False, exclude_repeat_buyer_b: bool = False,
+                                     lock_start_date_a: str = '', lock_start_date_b: str = '') -> List[Dict]:
         """销售代理分析对比"""
         try:
             # 读取销售代理数据
@@ -660,7 +697,7 @@ class ABComparisonAnalyzer:
                         if member_name and member_code and id_card:
                             sales_agents_lookup.add((member_name, member_code, id_card))
             
-            def analyze_sample_sales_agent(sample_df):
+            def analyze_sample_sales_agent(sample_df, repeat_buyer_only=False, exclude_repeat_buyer=False, lock_start_date=''):
                 if len(sample_df) == 0:
                     return {'total_orders': 0, 'total_unique_buyers': 0, 'agent_orders': 0, 'agent_ratio': 0.0, 'repeat_buyer_orders': 0, 'repeat_buyer_ratio': 0.0, 'unique_repeat_buyers': 0, 'repeat_buyer_orders_combo': 0, 'repeat_buyer_ratio_combo': 0.0, 'unique_repeat_buyers_combo': 0}
                 
@@ -684,18 +721,17 @@ class ABComparisonAnalyzer:
                 total_orders = len(sample_df)
                 agent_ratio = agent_orders / total_orders if total_orders > 0 else 0.0
                 
-                # 重复买家分析 - 口径1：仅基于身份证号
+                # 重复买家分析 - 统一使用简单的重复订单统计
+                # 无论是否使用复购用户筛选，都直接统计当前样本中的重复买家
+                
+                # 口径1：仅基于身份证号
                 buyer_identity_counts = sample_df['Buyer Identity No'].value_counts()
                 repeat_buyers = buyer_identity_counts[buyer_identity_counts >= 2]
                 repeat_buyer_orders = repeat_buyers.sum()
                 repeat_buyer_ratio = repeat_buyer_orders / total_orders if total_orders > 0 else 0.0
                 unique_repeat_buyers = len(repeat_buyers)
                 
-                # 计算总买家数量（基于身份证号）
-                total_unique_buyers = sample_df['Buyer Identity No'].nunique()
-                
-                # 重复买家分析 - 口径2：身份证号+手机号双重匹配
-                # 创建身份证号+手机号的组合键
+                # 口径2：身份证号+手机号双重匹配
                 sample_df_clean = sample_df.dropna(subset=['Buyer Identity No', 'Buyer Cell Phone'])
                 buyer_combo_key = sample_df_clean['Buyer Identity No'].astype(str) + '_' + sample_df_clean['Buyer Cell Phone'].astype(str)
                 buyer_combo_counts = buyer_combo_key.value_counts()
@@ -703,6 +739,9 @@ class ABComparisonAnalyzer:
                 repeat_buyer_orders_combo = repeat_buyers_combo.sum()
                 repeat_buyer_ratio_combo = repeat_buyer_orders_combo / total_orders if total_orders > 0 else 0.0
                 unique_repeat_buyers_combo = len(repeat_buyers_combo)
+                
+                # 计算总买家数量（基于身份证号）
+                total_unique_buyers = sample_df['Buyer Identity No'].nunique()
                 
                 return {
                     'total_orders': total_orders,
@@ -718,8 +757,8 @@ class ABComparisonAnalyzer:
                 }
             
             # 分析两个样本
-            result_a = analyze_sample_sales_agent(sample_a)
-            result_b = analyze_sample_sales_agent(sample_b)
+            result_a = analyze_sample_sales_agent(sample_a, repeat_buyer_only_a, exclude_repeat_buyer_a, lock_start_date_a)
+            result_b = analyze_sample_sales_agent(sample_b, repeat_buyer_only_b, exclude_repeat_buyer_b, lock_start_date_b)
             
             return [{
                 'type': '销售代理分析',
@@ -815,7 +854,10 @@ class ABComparisonAnalyzer:
                                  sample_a_desc: str, sample_b_desc: str, 
                                  parent_regions_filter: List[str] = None,
                                  sample_a_label: str = "样本A",
-                                 sample_b_label: str = "样本B") -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                                 sample_b_label: str = "样本B",
+                                 repeat_buyer_only_a: bool = False, exclude_repeat_buyer_a: bool = False,
+                                 repeat_buyer_only_b: bool = False, exclude_repeat_buyer_b: bool = False,
+                                 lock_start_date_a: str = '', lock_start_date_b: str = '') -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """生成对比分析报告"""
         # 执行三种异常检测
         region_anomalies = self.analyze_region_distribution(sample_a, sample_b, parent_regions_filter)
@@ -823,7 +865,12 @@ class ABComparisonAnalyzer:
         demographic_anomalies = self.analyze_demographic_structure(sample_a, sample_b)
         
         # 执行销售代理分析和时间间隔分析
-        sales_agent_results = self.analyze_sales_agent_comparison(sample_a, sample_b)
+        sales_agent_results = self.analyze_sales_agent_comparison(
+            sample_a, sample_b, 
+            repeat_buyer_only_a, exclude_repeat_buyer_a,
+            repeat_buyer_only_b, exclude_repeat_buyer_b,
+            lock_start_date_a, lock_start_date_b
+        )
         time_interval_results = self.analyze_time_interval_comparison(sample_a, sample_b)
 
         # 动态样本名称用于列名和展示（已从调用方传入），若为空则回退到默认
@@ -1211,7 +1258,10 @@ def run_analysis(start_date_a, end_date_a, refund_start_date_a, refund_end_date_
         # 生成对比报告
         report, anomaly_df, sales_agent_df, time_interval_df = analyzer.generate_comparison_report(
             sample_a, sample_b, sample_a_desc, sample_b_desc, parent_regions_filter,
-            sample_a_label=sample_a_label, sample_b_label=sample_b_label
+            sample_a_label=sample_a_label, sample_b_label=sample_b_label,
+            repeat_buyer_only_a=repeat_buyer_only_a, exclude_repeat_buyer_a=exclude_repeat_buyer_a,
+            repeat_buyer_only_b=repeat_buyer_only_b, exclude_repeat_buyer_b=exclude_repeat_buyer_b,
+            lock_start_date_a=lock_start_date_a, lock_start_date_b=lock_start_date_b
         )
         
         return report, anomaly_df, sales_agent_df, time_interval_df

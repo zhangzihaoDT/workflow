@@ -2450,18 +2450,16 @@ class OrderTrendMonitor:
                 
                 for category in product_types:
                     if category == "增程":
-                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        # 统一的增程判断逻辑：对于"新一代"和非"新一代"产品，都根据数字52或66判断
                         category_mask = (
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | 
+                            filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     elif category == "纯电":
-                        # 其他产品为纯电
+                        # 统一的纯电判断逻辑：不包含数字52或66的产品为纯电
                         category_mask = ~(
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | 
+                            filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     else:
                         continue
@@ -2599,18 +2597,14 @@ class OrderTrendMonitor:
                 
                 for category in product_types:
                     if category == "增程":
-                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        # 统一的增程判断逻辑：对于"新一代"和非"新一代"产品，都根据数字52或66判断
                         category_mask = (
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     elif category == "纯电":
-                        # 其他产品为纯电
+                        # 统一的纯电判断逻辑：不包含数字52或66的产品为纯电
                         category_mask = ~(
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     else:
                         continue
@@ -2855,18 +2849,14 @@ class OrderTrendMonitor:
                 
                 for category in product_types:
                     if category == "增程":
-                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        # 统一的增程判断逻辑：对于"新一代"和非"新一代"产品，都根据数字52或66判断
                         category_mask = (
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     elif category == "纯电":
-                        # 其他产品为纯电
+                        # 统一的纯电判断逻辑：不包含数字52或66的产品为纯电
                         category_mask = ~(
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     else:
                         continue
@@ -3112,18 +3102,14 @@ class OrderTrendMonitor:
                 
                 for category in product_types:
                     if category == "增程":
-                        # 新一代52和新一代66为增程
+                        # 统一的增程判断逻辑：对于"新一代"和非"新一代"产品，都根据数字52或66判断
                         category_mask = (
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     elif category == "纯电":
-                        # 其他产品为纯电
+                        # 统一的纯电判断逻辑：不包含数字52或66的产品为纯电
                         category_mask = ~(
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     else:
                         continue
@@ -3259,18 +3245,14 @@ class OrderTrendMonitor:
                 
                 for category in product_types:
                     if category == "增程":
-                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        # 统一的增程判断逻辑：对于"新一代"和非"新一代"产品，都根据数字52或66判断
                         category_mask = (
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     elif category == "纯电":
-                        # 其他产品为纯电
+                        # 统一的纯电判断逻辑：不包含数字52或66的产品为纯电
                         category_mask = ~(
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     else:
                         continue
@@ -3510,18 +3492,14 @@ class OrderTrendMonitor:
                 
                 for category in product_types:
                     if category == "增程":
-                        # 产品名称中包含"新一代"和数字52或66的为增程
+                        # 统一的增程判断逻辑：对于"新一代"和非"新一代"产品，都根据数字52或66判断
                         category_mask = (
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     elif category == "纯电":
-                        # 其他产品为纯电
+                        # 统一的纯电判断逻辑：不包含数字52或66的产品为纯电
                         category_mask = ~(
-                            filtered_data['Product Name'].str.contains('新一代', na=False) & 
-                            (filtered_data['Product Name'].str.contains('52', na=False) | 
-                             filtered_data['Product Name'].str.contains('66', na=False))
+                            filtered_data['Product Name'].str.contains('52', na=False) | filtered_data['Product Name'].str.contains('66', na=False)
                         )
                     else:
                         continue

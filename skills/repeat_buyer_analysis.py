@@ -20,6 +20,32 @@ except Exception:
     except Exception:
         from .id_card_validator import validate_id_card
 
+def get_product_type(product_name: str) -> str:
+    """根据Product Name确定产品类型（增程/纯电）
+    
+    Args:
+        product_name: 产品名称
+        
+    Returns:
+        str: "增程" 或 "纯电" 或 "未知"
+    """
+    try:
+        if not product_name or pd.isna(product_name):
+            return "未知"
+        
+        product_name_str = str(product_name).strip()
+        
+        # 根据产品名称判断类型
+        # 统一的产品分类逻辑：对于"新一代"和非"新一代"产品，都根据数字52或66判断
+        if any(num in product_name_str for num in ["52", "66"]):
+            return "增程"
+        else:
+            # 不包含数字52或66的产品为纯电
+            return "纯电"
+    except Exception as e:
+        print(f"判断产品类型时出错: {e}")
+        return "未知"
+
 def test_new_repeat_buyer_feature():
     """测试新的复购用户筛选功能"""
     print("🧪 开始测试新的复购用户筛选功能...")
@@ -162,7 +188,7 @@ def get_specific_order_list():
     print(f"✅ 车型=CM2的订单数: {len(filtered_data)}")
     
     # 选择需要的列
-    required_columns = ['Order Number', 'Lock_Time', 'Buyer Identity No', '车型分组', 'Invoice_Upload_Time']
+    required_columns = ['Order Number', 'Lock_Time', 'Buyer Identity No', '车型分组', 'Invoice_Upload_Time', 'Product Name']
     
     # 检查列是否存在
     available_columns = []
@@ -175,6 +201,12 @@ def get_specific_order_list():
     if available_columns:
         # 提取订单清单
         order_list = filtered_data[available_columns].copy()
+        
+        # 添加产品分类列
+        if 'Product Name' in order_list.columns:
+            order_list['产品分类'] = order_list['Product Name'].apply(get_product_type)
+        else:
+            order_list['产品分类'] = '未知'
         
         # 按Lock_Time排序
         order_list = order_list.sort_values('Lock_Time')
@@ -353,9 +385,18 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     print(f"  - 符合条件订单: {len(result_df[result_df['订单类型'] == '符合条件订单']):,}")
     print(f"  - 早期订单: {len(result_df[result_df['订单类型'] == '早期订单']):,}")
     
+    # 添加产品分类列
+    if 'Product Name' in result_df.columns:
+        result_df['产品分类'] = result_df['Product Name'].apply(get_product_type)
+    else:
+        result_df['产品分类'] = '未知'
+    
     # 选择输出列
-    output_columns = ['Buyer Identity No', 'Buyer Cell Phone', 'Order Number', 'Lock_Time', '车型分组', 'Invoice_Upload_Time', '订单类型']
-    result_df = result_df[output_columns].copy()
+    output_columns = ['Buyer Identity No', 'Buyer Cell Phone', 'Order Number', 'Lock_Time', '车型分组', 'Product Name', '产品分类', 'Invoice_Upload_Time', '订单类型']
+    
+    # 检查列是否存在，只选择存在的列
+    available_output_columns = [col for col in output_columns if col in result_df.columns]
+    result_df = result_df[available_output_columns].copy()
     
     # 按买家身份证号和锁单时间排序
     result_df = result_df.sort_values(['Buyer Identity No', 'Lock_Time'])
