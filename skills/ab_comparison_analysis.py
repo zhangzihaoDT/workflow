@@ -444,7 +444,7 @@ class ABComparisonAnalyzer:
         anomalies = []
         
         # 使用与main.py一致的字段名
-        channel_columns = ['first_middle_channel_name', 'Channel', 'Sub_Channel', 'Dealer_Name']
+        channel_columns = ['first_main_channel_group', 'Channel', 'Sub_Channel', 'Dealer_Name']
         
         for channel_col in channel_columns:
             if channel_col not in sample_a.columns or channel_col not in sample_b.columns:

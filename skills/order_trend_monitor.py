@@ -2670,17 +2670,17 @@ class OrderTrendMonitor:
                 return pd.DataFrame()
             
             # 按渠道分组统计各车型的锁单数，调整为车型对比格式
-            if 'first_middle_channel_name' not in lock_data.columns:
+            if 'first_main_channel_group' not in lock_data.columns:
                 return pd.DataFrame()
             
             # 获取所有渠道
-            all_channels = lock_data['first_middle_channel_name'].dropna().unique()
+            all_channels = lock_data['first_main_channel_group'].dropna().unique()
             
             # 构建车型对比表格数据
             result_data = []
             
             for channel in all_channels:
-                channel_data = lock_data[lock_data['first_middle_channel_name'] == channel]
+                channel_data = lock_data[lock_data['first_main_channel_group'] == channel]
                 
                 row_data = {'渠道名称': channel if pd.notna(channel) else '未知渠道'}
                 
@@ -4922,7 +4922,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                     vehicle_selector = gr.CheckboxGroup(
                         choices=vehicle_groups,
                         label="选择车型分组",
-                        value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
+                        value=["CM2", "LS9"] if "CM2" in vehicle_groups and "LS9" in vehicle_groups else vehicle_groups[:2],
                         interactive=True
                     )
                 with gr.Column(scale=1):
@@ -4970,7 +4970,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                     refund_vehicle_selector = gr.CheckboxGroup(
                         choices=vehicle_groups,
                         label="选择车型分组",
-                        value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
+                        value=["CM2", "LS9"] if "CM2" in vehicle_groups and "LS9" in vehicle_groups else vehicle_groups[:2],
                         interactive=True
                     )
                 with gr.Column(scale=1):
@@ -5040,7 +5040,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                 lock_vehicle_selector = gr.CheckboxGroup(
                     choices=vehicle_groups,
                     label="选择车型分组",
-                    value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
+                    value=["CM2", "LS9"] if "CM2" in vehicle_groups and "LS9" in vehicle_groups else vehicle_groups[:2],
                     interactive=True
                 )
                 lock_n_days = gr.Number(
@@ -5083,7 +5083,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                         config_vehicle_selector = gr.CheckboxGroup(
                             choices=vehicle_groups,
                             label="选择车型分组",
-                            value=["CM2", "CM1"] if "CM2" in vehicle_groups and "CM1" in vehicle_groups else vehicle_groups[:2],
+                            value=["CM2", "LS9"] if "CM2" in vehicle_groups and "LS9" in vehicle_groups else vehicle_groups[:2],
                             interactive=True
                         )
                     
@@ -5179,9 +5179,9 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                         wrap=True
                     )
                     
-                    gr.Markdown("### 📊 first_middle_channel_name锁单统计")
+                    gr.Markdown("### 📊 first_main_channel_group锁单统计")
                     config_channel_table = gr.DataFrame(
-                        label="first_middle_channel_name锁单统计表格",
+                        label="first_main_channel_group锁单统计表格",
                         interactive=False,
                         wrap=True,
                         datatype=["str"] + ["html"] * 20
@@ -5322,7 +5322,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                     delivery_vehicle_selector = gr.CheckboxGroup(
                         label="🚗 车型选择",
                         choices=monitor.get_vehicle_groups(),
-                        value=["CM2", "CM1"],
+                        value=["CM2", "LS9"],
                         info="选择要分析的车型分组"
                     )
                     
