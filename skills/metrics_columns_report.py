@@ -15,6 +15,7 @@ except Exception:
 BUSINESS_PARQUET = Path("/Users/zihao_/Documents/coding/dataset/formatted/business_daily_metrics.parquet")
 INTENTION_PARQUET = Path("/Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet")
 OUTPUT_MD = Path("/Users/zihao_/Documents/github/W35_workflow/metrics_columns_report.md")
+ORIGINAL_DIR = Path("/Users/zihao_/Documents/coding/dataset/processed")
 
 
 def _file_size_mb(p: Path) -> float:
@@ -88,6 +89,60 @@ def analyze_dataset(parquet_path: Path) -> Dict:
     }
 
 
+def _read_csv_with_fallback(csv_path: Path) -> pd.DataFrame:
+    last_error: Exception | None = None
+    for enc in ("utf-8", "utf-8-sig", "gb18030"):
+        try:
+            return pd.read_csv(csv_path, encoding=enc)
+        except UnicodeDecodeError as e:
+            last_error = e
+            continue
+    # 最后尝试默认编码
+    try:
+        return pd.read_csv(csv_path)
+    except Exception as e:
+        raise e if last_error is None else last_error
+
+
+def analyze_csv_dataset(csv_path: Path) -> Dict:
+    if not csv_path.exists():
+        raise FileNotFoundError(f"文件不存在: {csv_path}")
+    df = _read_csv_with_fallback(csv_path)
+    types = _identify_types(df)
+    comp = _completeness(df)
+    dup_count = int(df.duplicated().sum())
+    missing_counts = df.isna().sum()
+    missing = (
+        missing_counts[missing_counts > 0]
+        .sort_values(ascending=False)
+        .to_dict()
+    )
+    missing_percent = {
+        k: round(100.0 * v / df.shape[0], 2) if df.shape[0] > 0 else float("nan")
+        for k, v in missing.items()
+    }
+    return {
+        "path": str(csv_path),
+        "size_mb": _file_size_mb(csv_path),
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "shape": (df.shape[0], df.shape[1]),
+        "columns": list(df.columns),
+        "types": types,
+        "completeness": comp,
+        "duplicates": dup_count,
+        "missing": missing,
+        "missing_percent": missing_percent,
+    }
+
+
+def find_latest_cm2_csv(dir_path: Path) -> Path:
+    candidates = sorted(dir_path.glob("CM2_Configuration_Details_transposed_*.csv"))
+    if not candidates:
+        raise FileNotFoundError("未在目录中找到匹配的 CM2_Configuration_Details_transposed_*.csv 文件")
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return latest
+
+
 def _format_missing_table(stats: Dict) -> List[str]:
     lines: List[str] = []
     if not stats["missing"]:
@@ -159,8 +214,17 @@ def main():
     biz_md = format_md_for_dataset("Business Daily Metrics 字段清单", biz_stats)
     intention_md = format_md_for_dataset("附：意向订单分析字段清单", intention_stats)
 
-    # 合并为一个文件，业务日指标在前，意向订单附录在后
-    content = biz_md + "\n\n" + intention_md + "\n"
+    # 查找并分析最新 CM2 配置明细 CSV
+    cm2_md = ""
+    try:
+        latest_csv = find_latest_cm2_csv(ORIGINAL_DIR)
+        cm2_stats = analyze_csv_dataset(latest_csv)
+        cm2_md = format_md_for_dataset("附：CM2 配置明细字段清单（最新）", cm2_stats)
+    except FileNotFoundError as e:
+        cm2_md = f"\n\n> 提示：{e}"  # 不阻断整体生成
+
+    # 合并为一个文件：业务日指标、意向订单分析、CM2 配置明细
+    content = biz_md + "\n\n" + intention_md + "\n\n" + cm2_md + "\n"
     OUTPUT_MD.write_text(content, encoding="utf-8")
     print(f"已生成完善版字段说明: {OUTPUT_MD}")
 

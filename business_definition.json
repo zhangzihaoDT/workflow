@@ -22,7 +22,7 @@
     },
     "LS9": {
       "start": "2025-11-04",
-      "end": "2025-12-01"
+      "end": "2025-11-12"
     }
   },
   "battery_types": {
@@ -36,6 +36,26 @@
       "全新智己L6 Pro Max"
     ],
     "C_EXCLUDE": ["L6 Max 光年版", "L6-M0-75RWD-Vendue"]
+  },
+  "battery_capacity": {
+    "52kwh": [
+      "新一代智己LS6 52 Max",
+      "新一代智己LS6 52 Max+",
+      "新一代智己LS6 52 Pro"
+    ],
+    "66kwh": [
+      "新一代智己LS6 66 Max",
+      "新一代智己LS6 66 Max+"
+    ],
+    "76kwh": [
+      "新一代智己LS6 Max",
+      "新一代智己LS6 Max+",
+      "新一代智己LS6 Pro"
+    ],
+    "103kwh": [
+      "新一代智己LS6 Ultra",
+      "新一代智己LS6 Pro Max"
+    ]
   },
   "vehicle_prices": {
     "LS6 Vendue": 291900,
