@@ -2,7 +2,7 @@
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/business_daily_metrics.parquet
-- **生成时间**: 2025-11-07T12:33:21
+- **生成时间**: 2025-11-10T13:49:46
 - **文件大小**: 0.12 MB
 
 ## 数据基本信息
@@ -73,12 +73,12 @@ date
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet
-- **生成时间**: 2025-11-07T12:33:21
-- **文件大小**: 16.99 MB
+- **生成时间**: 2025-11-10T13:49:46
+- **文件大小**: 17.18 MB
 
 ## 数据基本信息
-- **数据形状**: 357666 行 × 30 列
-- **数据完整性**: 82.32%
+- **数据形状**: 360801 行 × 30 列
+- **数据完整性**: 82.31%
 - **重复行数**: 0
 
 ## 数据类型分布
@@ -88,64 +88,66 @@ date
 
 ## 列信息详情
 ### 数值列
-Store Agent Phone, Buyer Cell Phone, Intention Payment Time 小时, buyer_age, 开票价格, Order Number 不同计数
+Buyer Cell Phone, buyer_age, Store Agent Phone, Intention Payment Time 小时, 开票价格, Order Number 不同计数
 
 ### 分类列
-Order Number, 车型分组, Store City, Store Name, Store Code, pre_vehicle_model_type, Store Agent Name, Store Agent Id, Buyer Identity No, first_main_channel_group, order_gender, Parent Region Name, License Province, license_city_level, License City, Product Name
+Buyer Identity No, first_main_channel_group, License City, License Province, license_city_level, Order Number, order_gender, Parent Region Name, pre_vehicle_model_type, Product Name, Store Agent Id, Store Agent Name, Store City, Store Code, Store Name, 车型分组
 
 ### 日期列
-store_create_date, Invoice_Upload_Time, Order_Create_Time, Intention_Payment_Time, intention_refund_time, first_assign_time, Lock_Time, first_touch_time
+first_assign_time, first_touch_time, Intention_Payment_Time, intention_refund_time, Lock_Time, Order_Create_Time, Invoice_Upload_Time, store_create_date
 
 
 ### 缺失值异常
 
 | 列名 | 缺失数量 | 缺失比例 |
 |------|----------|----------|
-| pre_vehicle_model_type | 333301 | 93.19% |
-| intention_refund_time | 246677 | 68.97% |
-| Invoice_Upload_Time | 231021 | 64.59% |
-| 开票价格 | 231021 | 64.59% |
-| Lock_Time | 192991 | 53.96% |
-| Intention_Payment_Time | 192460 | 53.81% |
-| Intention Payment Time 小时 | 192460 | 53.81% |
-| Buyer Identity No | 138371 | 38.69% |
-| buyer_age | 132643 | 37.09% |
-| first_touch_time | 2260 | 0.63% |
-| license_city_level | 2226 | 0.62% |
+| pre_vehicle_model_type | 336437 | 93.25% |
+| intention_refund_time | 249327 | 69.10% |
+| 开票价格 | 233433 | 64.70% |
+| Invoice_Upload_Time | 233433 | 64.70% |
+| Lock_Time | 195193 | 54.10% |
+| Intention Payment Time 小时 | 194024 | 53.78% |
+| Intention_Payment_Time | 194024 | 53.78% |
+| Buyer Identity No | 139478 | 38.66% |
+| buyer_age | 133868 | 37.10% |
+| first_touch_time | 2281 | 0.63% |
+| license_city_level | 2256 | 0.63% |
 | Store City | 614 | 0.17% |
-| Store Agent Name | 193 | 0.05% |
-| Store Agent Id | 193 | 0.05% |
-| Store Agent Phone | 193 | 0.05% |
+| Store Agent Id | 165 | 0.05% |
+| Store Agent Name | 165 | 0.05% |
+| Store Agent Phone | 165 | 0.05% |
+| order_gender | 1 | 0.00% |
+| first_assign_time | 1 | 0.00% |
 
 ## 字段列表
-- `Order Number`
-- `车型分组`
-- `Store City`
-- `Store Name`
-- `Store Code`
-- `store_create_date`
-- `pre_vehicle_model_type`
-- `Store Agent Name`
-- `Store Agent Id`
-- `Store Agent Phone`
 - `Buyer Cell Phone`
 - `Buyer Identity No`
-- `Invoice_Upload_Time`
-- `Order_Create_Time`
+- `buyer_age`
+- `first_assign_time`
+- `first_touch_time`
 - `Intention_Payment_Time`
 - `intention_refund_time`
-- `first_main_channel_group`
-- `first_assign_time`
-- `Intention Payment Time 小时`
 - `Lock_Time`
-- `buyer_age`
-- `order_gender`
-- `first_touch_time`
-- `Parent Region Name`
+- `Order_Create_Time`
+- `Invoice_Upload_Time`
+- `store_create_date`
+- `first_main_channel_group`
+- `License City`
 - `License Province`
 - `license_city_level`
-- `License City`
+- `Order Number`
+- `order_gender`
+- `Parent Region Name`
+- `pre_vehicle_model_type`
 - `Product Name`
+- `Store Agent Id`
+- `Store Agent Name`
+- `Store Agent Phone`
+- `Store City`
+- `Store Code`
+- `Store Name`
+- `Intention Payment Time 小时`
+- `车型分组`
 - `开票价格`
 - `Order Number 不同计数`
 
@@ -153,7 +155,7 @@ store_create_date, Invoice_Upload_Time, Order_Create_Time, Intention_Payment_Tim
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/processed/CM2_Configuration_Details_transposed_20251107_123143.csv
-- **生成时间**: 2025-11-07T12:33:21
+- **生成时间**: 2025-11-10T13:49:46
 - **文件大小**: 3.47 MB
 
 ## 数据基本信息
