@@ -1360,13 +1360,8 @@ class OrderTrendMonitor:
                 (pd.to_datetime(lock_data_in_period['Intention_Payment_Time']).dt.date > vehicle_end_date.date())
             ])
             
-            # 直接锁单数：含有Lock_Time但没有Intention_Payment_Time的订单数
-            direct_locks = len(lock_data_in_period[
-                lock_data_in_period['Intention_Payment_Time'].isna()
-            ])
-            
-            # 发布会后N日累计锁单数应该等于三个锁单数的总和
-            total_lock_orders = retained_locks + post_launch_locks + direct_locks
+            # 发布会后N日累计锁单数：期间内所有锁单总数（包含直接锁单，但不单独展示）
+            total_lock_orders = len(lock_data_in_period)
             
             # 计算小订转化率（小订留存锁单数 / 累计预售小订数）
             conversion_rate = (retained_locks / total_presale_orders * 100) if total_presale_orders > 0 else 0
@@ -1378,7 +1373,6 @@ class OrderTrendMonitor:
                 f'发布会后{days_after_launch}日累计锁单数': total_lock_orders,
                 '小订留存锁单数': retained_locks,
                 '发布会后小订锁单数': post_launch_locks,
-                '直接锁单数': direct_locks,
                 '小订转化率(%)': round(conversion_rate, 2)
             })
         
@@ -3054,7 +3048,7 @@ class OrderTrendMonitor:
                                 lock_n_days: int = 30, include_unknown: bool = True, weekend_lock_filter: str = "全部", 
                                 include_repeat_buyers: bool = True, include_repeat_buyers_combo: bool = True, 
                                 city_levels: List[str] = None) -> pd.DataFrame:
-        """计算年龄统计信息（平均年龄、中位数、方差）"""
+        """计算年龄统计信息（平均年龄、中位数、标准差、异常数据数），并进行异常数据清理"""
         try:
             if self.df.empty:
                 return pd.DataFrame()
@@ -3170,20 +3164,41 @@ class OrderTrendMonitor:
                 vehicle_data = lock_data[lock_data['车型分组'] == vehicle]
                 
                 if not vehicle_data.empty and 'buyer_age' in vehicle_data.columns:
-                    # 获取有效年龄数据
-                    ages = vehicle_data['buyer_age'].dropna()
-                    
+                    # 获取有效年龄数据（转换为数值并去除缺失）
+                    raw_ages = pd.to_numeric(vehicle_data['buyer_age'], errors='coerce').dropna()
+                    raw_count = int(len(raw_ages))
+
+                    # 异常数据清理：去除不合理年龄与IQR法剔除离群值
+                    # 1) 基础合理范围过滤（例如15-85岁）
+                    ages = raw_ages[(raw_ages >= 15) & (raw_ages <= 85)]
+
+                    # 2) IQR离群值剔除
                     if len(ages) > 0:
-                        mean_age = round(ages.mean(), 1)
-                        median_age = round(ages.median(), 1)
-                        variance_age = round(ages.var(), 1)
-                        
+                        q1 = ages.quantile(0.25)
+                        q3 = ages.quantile(0.75)
+                        iqr = q3 - q1
+                        lower_bound = q1 - 1.5 * iqr
+                        upper_bound = q3 + 1.5 * iqr
+                        cleaned_ages = ages[(ages >= lower_bound) & (ages <= upper_bound)]
+                    else:
+                        cleaned_ages = ages
+
+                    # 若清理后为空，则回退使用范围过滤后的年龄
+                    final_ages = cleaned_ages if len(cleaned_ages) > 0 else ages
+
+                    if len(final_ages) > 0:
+                        mean_age = round(final_ages.mean(), 1)
+                        median_age = round(final_ages.median(), 1)
+                        std_age = round(final_ages.std(ddof=1), 1)
+                        abnormal_count = int(max(0, raw_count - len(final_ages)))
+
                         result_data.append({
                             '车型': vehicle,
                             '平均年龄': mean_age,
                             '中位数': median_age,
-                            '方差': variance_age,
-                            '样本数': len(ages)
+                            '标准差': std_age,
+                            '样本数': int(len(final_ages)),
+                            '异常数据数': abnormal_count
                         })
             
             if result_data:
@@ -4269,16 +4284,10 @@ class OrderTrendMonitor:
                         (pd.to_datetime(day_lock_data['Intention_Payment_Time']).dt.date > vehicle_end_date)
                     ])
                     
-                    # 直接锁单数：含有Lock_Time但没有Intention_Payment_Time的订单数
-                    direct_locks = len(day_lock_data[
-                        day_lock_data['Intention_Payment_Time'].isna()
-                    ])
-                    
-                    # 验证数据一致性：三个分类的合计应该等于当日锁单总数
-                    total_classified = retained_locks + post_launch_locks + direct_locks
-                    if total_classified != daily_locks:
-                        logger.warning(f"第{day}日 {vehicle} 锁单分类不一致: 总数{daily_locks}, 分类合计{total_classified}")
-                        logger.warning(f"  小订留存: {retained_locks}, 发布会后: {post_launch_locks}, 直接: {direct_locks}")
+                    # 分类合计（仅保留小订留存与发布会后小订两类）
+                    total_classified = retained_locks + post_launch_locks
+                    if total_classified > daily_locks:
+                        logger.warning(f"第{day}日 {vehicle} 锁单分类可能异常: 总数{daily_locks}, 分类合计{total_classified}")
                     
                     # 累计锁单数（从第0日到当前日）
                     cumulative_data = vehicle_data[
@@ -4291,7 +4300,7 @@ class OrderTrendMonitor:
                     # 按新的表头顺序组织数据
                     day_data[f'{vehicle}锁单数'] = daily_locks
                     day_data[f'{vehicle}累计锁单数'] = cumulative_locks
-                    day_data[f'{vehicle}锁单结构'] = f"{retained_locks}/{post_launch_locks}/{direct_locks}"
+                    day_data[f'{vehicle}锁单结构'] = f"{retained_locks}/{post_launch_locks}"
                 
                 result_data.append(day_data)
             
@@ -4345,7 +4354,7 @@ class OrderTrendMonitor:
                     # 车型锁单结构
                     structure_col = f'{vehicle}锁单结构'
                     if structure_col in row.index:
-                        table_row[f'{vehicle}锁单结构'] = str(row[structure_col]) if pd.notna(row[structure_col]) else "0/0/0"
+                        table_row[f'{vehicle}锁单结构'] = str(row[structure_col]) if pd.notna(row[structure_col]) else "0/0"
                 
                 table_data.append(table_row)
             
@@ -4910,9 +4919,9 @@ def update_config_table(selected_vehicles, start_date, end_date, product_categor
 vehicle_groups = monitor.get_vehicle_groups()
 
 # 创建Gradio界面
-with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# 🚗 小订订单趋势监测工具")
-    gr.Markdown("监测各车型小订订单的趋势变化，支持多维度对比分析")
+with gr.Blocks(title="订单趋势监测", theme=gr.themes.Soft()) as demo:
+    gr.Markdown("# 🚗 订单趋势监测工具")
+    gr.Markdown("监测各车型订单的趋势变化，支持多维度对比分析")
     
     with gr.Tabs():
         # 订单模块
@@ -4952,7 +4961,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                     label="汇总统计表格",
                     interactive=False,
                     wrap=True,
-                    datatype=["str", "number", "number", "number", "number", "number", "number", "number"]  # 车型(str) + 累计预售天数(number) + 累计预售小订数(number) + 发布会后N日累计锁单数(number) + 小订留存锁单数(number) + 发布会后小订锁单数(number) + 直接锁单数(number) + 小订转化率(number)
+                    datatype=["str", "number", "number", "number", "number", "number", "number"]  # 车型(str) + 累计预售天数(number) + 累计预售小订数(number) + 发布会后N日累计锁单数(number) + 小订留存锁单数(number) + 发布会后小订锁单数(number) + 小订转化率(number)
                 )
             
             with gr.Row():
@@ -5093,7 +5102,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                             config_start_date = gr.Textbox(
                                 label="小订开始日期",
                                 placeholder="YYYY-MM-DD（可选）",
-                                value="2025-08-15"
+                                value="2025-11-04"
                             )
                             config_end_date = gr.Textbox(
                                 label="小订结束日期",
@@ -5105,7 +5114,7 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                             config_lock_start_date = gr.Textbox(
                                 label="锁单开始日期",
                                 placeholder="YYYY-MM-DD（可选）",
-                                value="2025-09-10"
+                                value="2025-11-12"
                             )
                             config_lock_end_date = gr.Textbox(
                                 label="锁单结束日期",
@@ -5206,8 +5215,8 @@ with gr.Blocks(title="小订订单趋势监测", theme=gr.themes.Soft()) as demo
                         label="年龄统计信息",
                         interactive=False,
                         wrap=True,
-                        datatype=["str", "number", "number", "number"],  # 统计项、平均年龄、中位数、方差
-                        headers=["统计项", "平均年龄", "中位数", "方差"]
+                        datatype=["str", "number", "number", "number", "number", "number"],  # 车型、平均年龄、中位数、标准差、样本数、异常数据数
+                        headers=["车型", "平均年龄", "中位数", "标准差", "样本数", "异常数据数"]
                     )
                     
                     gr.Markdown("### 📊 order_gender锁单统计")

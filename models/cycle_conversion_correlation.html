@@ -1,0 +1,71 @@
+
+    <!doctype html>
+    <html lang="zh-CN">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>周期小订与上市后锁单相关性</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; margin: 24px; }
+        h1 { font-size: 20px; margin-bottom: 12px; }
+        .desc { color: #555; margin-bottom: 12px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; }
+        th { background: #f9fafb; }
+        .links { margin: 12px 0; }
+        .links a { margin-right: 16px; }
+        .metrics { margin-top: 16px; }
+      </style>
+    </head>
+    <body>
+      <h1>周期小订与上市后锁单相关性</h1>
+      <div class="desc">小订数统计范围为 [start, end]；锁单数统计范围为 [end, end+30)。</div>
+      <div class="links"><a href="cycle_conversion_correlation.csv" download>下载 CSV</a></div>
+      <table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th>车型分组</th>
+      <th>小订数_全周期</th>
+      <th>锁单数_end后30天</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>CM0</td>
+      <td>31973</td>
+      <td>12604</td>
+    </tr>
+    <tr>
+      <td>CM1</td>
+      <td>27299</td>
+      <td>9581</td>
+    </tr>
+    <tr>
+      <td>CM2</td>
+      <td>60182</td>
+      <td>21673</td>
+    </tr>
+    <tr>
+      <td>DM0</td>
+      <td>20658</td>
+      <td>5715</td>
+    </tr>
+    <tr>
+      <td>DM1</td>
+      <td>18575</td>
+      <td>5018</td>
+    </tr>
+    <tr>
+      <td>LS9</td>
+      <td>11168</td>
+      <td>2314</td>
+    </tr>
+  </tbody>
+</table>
+      <div class="metrics">
+        <p><strong>Pearson 相关：</strong> 0.9913</p>
+        <p><strong>Spearman 秩相关：</strong> 1.0000</p>
+      </div>
+    </body>
+    </html>
+    

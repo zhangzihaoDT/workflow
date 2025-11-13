@@ -43,21 +43,13 @@
       "新一代智己LS6 52 Max+",
       "新一代智己LS6 52 Pro"
     ],
-    "66kwh": [
-      "新一代智己LS6 66 Max",
-      "新一代智己LS6 66 Max+"
-    ],
-    "76kwh": [
-      "新一代智己LS6 Max",
-      "新一代智己LS6 Max+",
-      "新一代智己LS6 Pro"
-    ],
-    "103kwh": [
-      "新一代智己LS6 Ultra",
-      "新一代智己LS6 Pro Max"
-    ]
+    "66kwh": ["新一代智己LS6 66 Max", "新一代智己LS6 66 Max+"],
+    "76kwh": ["新一代智己LS6 Max", "新一代智己LS6 Max+", "新一代智己LS6 Pro"],
+    "103kwh": ["新一代智己LS6 Ultra", "新一代智己LS6 Pro Max"]
   },
   "vehicle_prices": {
+    "智己LS9 52 Ultra": 332800,
+    "智己LS9 66 Ultra": 344900,
     "LS6 Vendue": 291900,
     "LS6 M1 83RWD+ Max": 300000,
     "LS6 M1 100AWD Max": 300000,

@@ -1,0 +1,203 @@
+
+    <!doctype html>
+    <html lang="zh-CN">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>周期统计与锁单视角概览</title>
+      
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; margin: 24px; }
+      h1 { font-size: 20px; margin-bottom: 12px; }
+      h2 { font-size: 18px; margin-top: 20px; }
+      .desc { color: #555; margin-bottom: 12px; }
+      table { border-collapse: collapse; width: 50%; }
+      th, td { border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; }
+      th { background: #f9fafb; }
+      .links { margin: 12px 0; }
+      .links a { margin-right: 16px; }
+    </style>
+    
+    </head>
+    <body>
+      <h1>周期统计与锁单视角概览</h1>
+      <div class="desc">本页包含两类统计：起始窗口（[start, start+N)）的支付/退订对比与上市发布会后窗口（[end, end+N)）的锁单/留存/退订对比。</div>
+
+      <h2>起始窗口统计（支付/退订）</h2>
+      <div class="links">
+        <a href="period_start_payment_refund_summary.csv" download>下载 CSV：起始窗口统计</a>
+      </div>
+      <table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th>周期</th>
+      <th>开始日期</th>
+      <th>结束日期</th>
+      <th>车型分组</th>
+      <th>起始2日小订数</th>
+      <th>起始2日退订数</th>
+      <th>全周期小订数</th>
+      <th>起始2日退订率</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>CM0</td>
+      <td>2023-08-25</td>
+      <td>2023-10-12</td>
+      <td>CM0</td>
+      <td>5432</td>
+      <td>348</td>
+      <td>31973</td>
+      <td>6.4%</td>
+    </tr>
+    <tr>
+      <td>DM0</td>
+      <td>2024-04-08</td>
+      <td>2024-05-13</td>
+      <td>DM0</td>
+      <td>5404</td>
+      <td>220</td>
+      <td>20658</td>
+      <td>4.1%</td>
+    </tr>
+    <tr>
+      <td>CM1</td>
+      <td>2024-08-30</td>
+      <td>2024-09-26</td>
+      <td>CM1</td>
+      <td>3256</td>
+      <td>183</td>
+      <td>27299</td>
+      <td>5.6%</td>
+    </tr>
+    <tr>
+      <td>CM2</td>
+      <td>2025-08-15</td>
+      <td>2025-09-10</td>
+      <td>CM2</td>
+      <td>8577</td>
+      <td>188</td>
+      <td>60182</td>
+      <td>2.2%</td>
+    </tr>
+    <tr>
+      <td>DM1</td>
+      <td>2025-04-18</td>
+      <td>2025-05-13</td>
+      <td>DM1</td>
+      <td>3241</td>
+      <td>122</td>
+      <td>18575</td>
+      <td>3.8%</td>
+    </tr>
+    <tr>
+      <td>LS9</td>
+      <td>2025-11-04</td>
+      <td>2025-11-12</td>
+      <td>LS9</td>
+      <td>4699</td>
+      <td>71</td>
+      <td>11168</td>
+      <td>1.5%</td>
+    </tr>
+  </tbody>
+</table>
+
+      <h2>锁单视角统计（锁单/留存/退订）</h2>
+      <div class="links">
+        <a href="period_end_lock_conversion_summary.csv" download>下载 CSV：锁单视角统计</a>
+      </div>
+      <table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th>周期</th>
+      <th>开始日期</th>
+      <th>结束日期</th>
+      <th>车型分组</th>
+      <th>上市发布会后2日锁单数</th>
+      <th>全周期小订数</th>
+      <th>小订留存锁单数</th>
+      <th>上市发布会后2日小订退订数</th>
+      <th>小订转化率</th>
+      <th>小订退订率</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>CM0</td>
+      <td>2023-08-25</td>
+      <td>2023-10-12</td>
+      <td>CM0</td>
+      <td>2299</td>
+      <td>31973</td>
+      <td>2248</td>
+      <td>7180</td>
+      <td>7.0%</td>
+      <td>22.5%</td>
+    </tr>
+    <tr>
+      <td>DM0</td>
+      <td>2024-04-08</td>
+      <td>2024-05-13</td>
+      <td>DM0</td>
+      <td>1476</td>
+      <td>20658</td>
+      <td>1382</td>
+      <td>5207</td>
+      <td>6.7%</td>
+      <td>25.2%</td>
+    </tr>
+    <tr>
+      <td>CM1</td>
+      <td>2024-08-30</td>
+      <td>2024-09-26</td>
+      <td>CM1</td>
+      <td>2538</td>
+      <td>27299</td>
+      <td>2480</td>
+      <td>5876</td>
+      <td>9.1%</td>
+      <td>21.5%</td>
+    </tr>
+    <tr>
+      <td>CM2</td>
+      <td>2025-08-15</td>
+      <td>2025-09-10</td>
+      <td>CM2</td>
+      <td>7449</td>
+      <td>60182</td>
+      <td>7426</td>
+      <td>9507</td>
+      <td>12.3%</td>
+      <td>15.8%</td>
+    </tr>
+    <tr>
+      <td>DM1</td>
+      <td>2025-04-18</td>
+      <td>2025-05-13</td>
+      <td>DM1</td>
+      <td>1930</td>
+      <td>18575</td>
+      <td>1912</td>
+      <td>3468</td>
+      <td>10.3%</td>
+      <td>18.7%</td>
+    </tr>
+    <tr>
+      <td>LS9</td>
+      <td>2025-11-04</td>
+      <td>2025-11-12</td>
+      <td>LS9</td>
+      <td>2314</td>
+      <td>11168</td>
+      <td>2290</td>
+      <td>695</td>
+      <td>20.5%</td>
+      <td>6.2%</td>
+    </tr>
+  </tbody>
+</table>
+    </body>
+    </html>
+    
