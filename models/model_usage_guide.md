@@ -8,10 +8,10 @@
 - 主要特征：
   - 类别：`order_gender`（One-Hot）
   - 目标/频次编码来源列：`License City`、`first_main_channel_group`、`Parent Region Name`（生成 `<col>_te` 与 `<col>_fe` 数值特征）
-  - 数值：`buyer_age`、`interval_touch_to_pay_days`、`interval_assign_to_pay_days`、`is_repeat_buyer`、`cumulative_order_count`、`last_invoice_gap_days`、`interval_presale_to_pay_days`
-- 目标/频次编码来源列：`License City`、`first_main_channel_group`、`Parent Region Name`（生成 `<col>_te` 与 `<col>_fe` 数值特征）
-- 数据过滤：`Intention_Payment_Time` 落在 `business_definition.json` 业务定义范围内；订单按 `Order Number` 去重。
-- 最佳模型：XGBoost（AUC ≈ 0.7229）。
+  - 数值：`buyer_age`、`interval_touch_to_pay_days`、`interval_assign_to_pay_days`、`is_repeat_buyer`、`cumulative_order_count`、`last_invoice_gap_days`、`interval_presale_to_pay_days`、`deposit_amount`
+  - 数据过滤：`Intention_Payment_Time` 落在 `business_definition.json` 业务定义范围内；订单按 `Order Number` 去重。
+  - 最佳模型：XGBoost（AUC ≈ 0.7203）。
+  - 训练时生成报告：`models/deposit_effect_report.md`（定金消融对比）与 `models/psm_deposit_report.md`（PSM 因果分析）。
 
 ## 环境准备
 
@@ -33,6 +33,8 @@
 3. 输出内容：
    - 各模型 AUC 对比（Logistic、RF、XGB、LGBM）
    - 最佳模型保存：`models/intention_binary_model.joblib`
+   - 定金消融报告：`models/deposit_effect_report.md`
+   - 定金 PSM 因果报告：`models/psm_deposit_report.md`
 
 ## 特征解释与学习曲线
 
@@ -62,6 +64,7 @@ python skills/intention_order_binary_model.py '{
   "last_invoice_gap_days":null,
   "first_main_channel_group":"线上直销",
   "Parent Region Name":"上海",
+  "deposit_amount":2000,
   "车型分组":"CM2",
   "Intention_Payment_Time":"2025-08-20"
 }'
@@ -69,7 +72,8 @@ python skills/intention_order_binary_model.py '{
 
 - 说明：
   - 目标/频次编码需要原始来源列：`License City`、`first_main_channel_group`、`Parent Region Name`。
-  - `interval_presale_to_pay_days` 将在管道中基于 `车型分组` 与业务定义自动计算（训练阶段已计算；推理阶段未强制，但建议提供以提高一致性）。
+  - `interval_presale_to_pay_days` 在训练阶段由脚本根据业务定义计算；推理阶段若不提供将按缺失插补，建议尽量提供以提高一致性。
+  - 建议在推理时显式提供 `deposit_amount`（单位：元）；若不提供将被视为缺失并按中位数插补。
   - 未提供的数值特征默认：`is_repeat_buyer`、`cumulative_order_count` 为 0；其他为缺失，由插补处理。
 
 ### 程序化使用
@@ -88,7 +92,8 @@ te_sources = saved.get("te_source_cols", [])
 row = {"license_city_level":"T2","order_gender":"F","buyer_age":28,
        "interval_touch_to_pay_days":3.5,"interval_assign_to_pay_days":1.2,
        "is_repeat_buyer":0,"cumulative_order_count":1,"last_invoice_gap_days":None,
-       "first_main_channel_group":"线上直销","Parent Region Name":"上海","License City":"上海"}
+       "first_main_channel_group":"线上直销","Parent Region Name":"上海","License City":"上海",
+       "deposit_amount":2000}
 X = pd.DataFrame([row], columns=cat_cols+num_cols+te_sources)
 proba = float(model.predict_proba(X)[:,1][0])
 print(proba)
@@ -105,3 +110,12 @@ print(proba)
 - 超参数搜索：网格/贝叶斯优化 XGBoost/LightGBM 超参数与编码平滑系数 `alpha`。
 - 特征工程：渠道/区域更细粒度编码、交互项、更多历史行为（近期小订频率、退订历史等）。
 - 评估扩展：PR-AUC、校准曲线、分组稳定性（按门店/渠道/地区分组）。
+
+## 定金影响验证（PSM）
+
+- 运行同一训练脚本会生成 `models/psm_deposit_report.md`，包含：
+  - 倾向得分估计（Logistic）与可分性指标（用于处理概率估计与可解释性）。
+  - 最近邻 1:1 匹配（caliper=0.05），报告匹配对数与约束。
+  - 匹配前后平衡检验：SMD 最大值与匹配后 `SMD<0.1` 的比例（学术级平衡标准）。
+  - ATT（平均处理效应-已处理）与 95% 置信区间，用于业务汇报因果影响的量化。
+- 结论判读建议：若在良好平衡（多数特征 SMD<0.1）下 ATT 接近 0 且 95%CI 跨 0，则可支持“定金金额并非锁单率主要驱动因素”；反之则存在显著的因果影响。

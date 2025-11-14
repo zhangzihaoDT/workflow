@@ -210,6 +210,19 @@ def build_dataset() -> pd.DataFrame:
         df["interval_presale_to_pay_days"] = gap.where(gap >= 0, np.nan)
         df = df.drop(columns=["_presale_start"])
 
+    # 定金金额特征：根据车型分组映射（用户提供：LS9=5000，CM2=2000）
+    # 为提高鲁棒性，允许包含型谱文本（如包含“LS9”、“CM2”均可识别）
+    df["deposit_amount"] = np.nan
+    if "车型分组" in df.columns:
+        def _map_deposit(x: Any) -> float | np.nan:
+            s = str(x).upper() if pd.notna(x) else ""
+            if "LS9" in s:
+                return 5000.0
+            if "CM2" in s:
+                return 2000.0
+            return np.nan
+        df["deposit_amount"] = df["车型分组"].apply(_map_deposit)
+
     return df
 
 
@@ -224,6 +237,7 @@ def train_model(df: pd.DataFrame) -> Dict[str, Any]:
         "cumulative_order_count",
         "last_invoice_gap_days",
         "interval_presale_to_pay_days",
+        "deposit_amount",
     ]
 
     # 原始编码来源列（目标/频次编码）
@@ -365,6 +379,361 @@ def train_model(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
+def _get_feature_names_from_pipeline(pipeline: Pipeline) -> List[str]:
+    names: List[str] = []
+    try:
+        pre = pipeline.named_steps.get("preprocessor")
+        if hasattr(pre, "get_feature_names_out"):
+            raw = list(pre.get_feature_names_out())
+            # 清理前缀，如 "num__feature" 或 "cat__feature"
+            names = [str(n).split("__")[-1] for n in raw]
+    except Exception:
+        names = []
+    return names
+
+
+def analyze_deposit_influence(df: pd.DataFrame) -> Dict[str, Any]:
+    """对比分析定金金额对锁单率的主效应。
+
+    输出三种设置的AUC：
+    - base: 不含定金金额的原特征
+    - deposit_only: 仅使用定金金额
+    - full: 在原特征上加入定金金额
+
+    并从 full 的逻辑回归中提取系数排名，查看 deposit_amount 的相对权重。
+    结果会保存到 models/deposit_effect_report.md。
+    """
+
+    # 准备标签
+    y = df["purchase"].astype(int).values
+
+    # 定义基础列（不含定金）
+    base_feature_cols_categorical = ["order_gender"] if "order_gender" in df.columns else []
+    base_feature_cols_numeric = [
+        c for c in [
+            "buyer_age",
+            "interval_touch_to_pay_days",
+            "interval_assign_to_pay_days",
+            "is_repeat_buyer",
+            "cumulative_order_count",
+            "last_invoice_gap_days",
+            "interval_presale_to_pay_days",
+        ] if c in df.columns
+    ]
+
+    te_source_cols = [c for c in ["first_main_channel_group", "Parent Region Name", "License City"] if c in df.columns]
+    te_feature_cols = [f"{c}_te" for c in te_source_cols] + [f"{c}_fe" for c in te_source_cols]
+
+    # 组装不同设置的 X
+    def _make_X(cols_cat: List[str], cols_num: List[str], te_cols: List[str]) -> pd.DataFrame:
+        return df[cols_cat + cols_num + te_cols].copy()
+
+    # 训练/测试划分
+    X_base = _make_X(base_feature_cols_categorical, base_feature_cols_numeric, te_source_cols)
+    X_full = X_base.copy()
+    if "deposit_amount" in df.columns:
+        X_full["deposit_amount"] = df["deposit_amount"].values
+    X_dep_only = df[["deposit_amount"]].copy() if "deposit_amount" in df.columns else pd.DataFrame({"deposit_amount": [np.nan] * len(df)})
+
+    Xb_tr, Xb_te, y_tr, y_te = train_test_split(X_base, y, test_size=0.2, random_state=42, stratify=y)
+    Xf_tr, Xf_te, yf_tr, yf_te = train_test_split(X_full, y, test_size=0.2, random_state=42, stratify=y)
+    Xd_tr, Xd_te, yd_tr, yd_te = train_test_split(X_dep_only, y, test_size=0.2, random_state=42, stratify=y)
+
+    # 通用预处理器
+    num_base = Pipeline(steps=[("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())])
+    cat_base = Pipeline(steps=[("imputer", SimpleImputer(strategy="most_frequent")), ("onehot", OneHotEncoder(handle_unknown="ignore"))])
+    pre_base = ColumnTransformer(
+        transformers=[
+            ("num", num_base, base_feature_cols_numeric + [f for f in te_feature_cols if f in (te_feature_cols)]),
+            ("cat", cat_base, base_feature_cols_categorical),
+        ]
+    )
+    te_enc = TargetFreqEncoder(cols=te_source_cols, alpha=10.0)
+
+    # base: 不含定金
+    pipe_base_log = Pipeline(steps=[
+        ("te", te_enc),
+        ("preprocessor", pre_base),
+        ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+    ])
+
+    # full: 加入定金（在数值列里）
+    base_plus_dep_num = base_feature_cols_numeric + ["deposit_amount"]
+    pre_full = ColumnTransformer(
+        transformers=[
+            ("num", num_base, base_plus_dep_num + [f for f in te_feature_cols]),
+            ("cat", cat_base, base_feature_cols_categorical),
+        ]
+    )
+    pipe_full_log = Pipeline(steps=[
+        ("te", te_enc),
+        ("preprocessor", pre_full),
+        ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+    ])
+
+    # deposit_only
+    pre_dep_only = ColumnTransformer(transformers=[("num", num_base, ["deposit_amount"])])
+    pipe_dep_only_log = Pipeline(steps=[
+        ("preprocessor", pre_dep_only),
+        ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+    ])
+
+    # 训练与评估
+    pipe_base_log.fit(Xb_tr, y_tr)
+    pipe_full_log.fit(Xf_tr, yf_tr)
+    pipe_dep_only_log.fit(Xd_tr, yd_tr)
+
+    auc_base = float(roc_auc_score(y_te, pipe_base_log.predict_proba(Xb_te)[:, 1]))
+    auc_full = float(roc_auc_score(yf_te, pipe_full_log.predict_proba(Xf_te)[:, 1]))
+    auc_dep_only = float(roc_auc_score(yd_te, pipe_dep_only_log.predict_proba(Xd_te)[:, 1]))
+
+    # 提取 full 的特征权重
+    feat_names_full = _get_feature_names_from_pipeline(pipe_full_log)
+    coefs_full = []
+    try:
+        coef = pipe_full_log.named_steps["clf"].coef_.ravel()
+        coefs_full = list(zip(feat_names_full, coef))
+        coefs_full_sorted = sorted(coefs_full, key=lambda x: abs(x[1]), reverse=True)
+    except Exception:
+        coefs_full_sorted = []
+
+    dep_coef = None
+    for n, w in coefs_full_sorted:
+        if n == "deposit_amount":
+            dep_coef = float(w)
+            break
+
+    # 生成报告
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = MODEL_DIR / "deposit_effect_report.md"
+    lines = []
+    lines.append("# 定金金额对锁单率影响分析\n")
+    lines.append(f"- base AUC（不含定金）: {auc_base:.4f}\n")
+    lines.append(f"- deposit-only AUC（仅定金）: {auc_dep_only:.4f}\n")
+    lines.append(f"- full AUC（加入定金）: {auc_full:.4f}\n")
+    if dep_coef is not None:
+        lines.append(f"- full 逻辑回归中 `deposit_amount` 系数: {dep_coef:.6f}\n")
+    if coefs_full_sorted:
+        topk = coefs_full_sorted[:15]
+        lines.append("\n## full 模型特征权重Top15（按绝对值）\n")
+        for n, w in topk:
+            lines.append(f"- {n}: {w:.6f}\n")
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+    return {
+        "auc_base": auc_base,
+        "auc_deposit_only": auc_dep_only,
+        "auc_full": auc_full,
+        "deposit_coef_full": dep_coef,
+        "report_path": str(report_path),
+    }
+
+
+# ===== PSM（倾向得分匹配）针对定金金额（LS9=5000 vs CM2=2000）=====
+def build_dataset_ls9_cm2() -> pd.DataFrame:
+    """在通用构建的基础上，仅保留车型分组包含 LS9 或 CM2 的样本。其他筛选保持不变。"""
+    df = build_dataset()
+    if "车型分组" in df.columns:
+        s = df["车型分组"].astype(str).str.upper()
+        mask = s.str.contains("LS9") | s.str.contains("CM2")
+        df = df[mask].copy()
+    # 确保存在 deposit_amount 且不缺失
+    if "deposit_amount" in df.columns:
+        df = df[df["deposit_amount"].notna()].copy()
+    # 定义处理变量：T=1(LS9/5000)，T=0(CM2/2000)
+    df["treat_high_deposit"] = (df["deposit_amount"] >= 5000).astype(int)
+    return df
+
+
+def _compute_smd(X_t: np.ndarray, X_c: np.ndarray) -> np.ndarray:
+    """标准化均值差 SMD，适用于数值或One-Hot特征矩阵。"""
+    mt = np.nanmean(X_t, axis=0)
+    mc = np.nanmean(X_c, axis=0)
+    st = np.nanvar(X_t, axis=0, ddof=1)
+    sc = np.nanvar(X_c, axis=0, ddof=1)
+    pooled = np.sqrt((st + sc) / 2.0)
+    # 避免除零
+    pooled = np.where(pooled == 0, 1e-8, pooled)
+    smd = (mt - mc) / pooled
+    return np.abs(smd)
+
+
+def psm_deposit_analysis() -> Dict[str, Any]:
+    """执行基于Logistic的倾向得分匹配（1:1，caliper=0.05），并输出SMD与ATT报告。"""
+    df = build_dataset_ls9_cm2()
+
+    # 处理与协变量选择：不包含治疗相关的变量（deposit_amount、车型分组）
+    y = df["purchase"].astype(int).values
+    treat = df["treat_high_deposit"].astype(int).values
+
+    base_feature_cols_categorical = [c for c in ["order_gender"] if c in df.columns]
+    base_feature_cols_numeric = [
+        c for c in [
+            "buyer_age",
+            "interval_touch_to_pay_days",
+            "interval_assign_to_pay_days",
+            "is_repeat_buyer",
+            "cumulative_order_count",
+            "last_invoice_gap_days",
+            "interval_presale_to_pay_days",
+        ] if c in df.columns
+    ]
+    te_source_cols = [c for c in ["first_main_channel_group", "Parent Region Name", "License City"] if c in df.columns]
+
+    X_cov = df[base_feature_cols_categorical + base_feature_cols_numeric + te_source_cols].copy()
+
+    # 预处理：与主流程一致（目标/频次编码 + 数值标准化 + 类别One-Hot）
+    num_base = Pipeline(steps=[("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())])
+    cat_base = Pipeline(steps=[("imputer", SimpleImputer(strategy="most_frequent")), ("onehot", OneHotEncoder(handle_unknown="ignore"))])
+    te_enc = TargetFreqEncoder(cols=te_source_cols, alpha=10.0)
+
+    # 构造预处理用于Logit和SMD提取特征矩阵
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", num_base, base_feature_cols_numeric + [f"{c}_te" for c in te_source_cols] + [f"{c}_fe" for c in te_source_cols]),
+            ("cat", cat_base, base_feature_cols_categorical),
+        ]
+    )
+
+    # Step1: Logistic 倾向得分（稳健可解释）
+    ps_model = Pipeline(steps=[
+        ("te", te_enc),
+        ("preprocessor", preprocessor),
+        ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+    ])
+    ps_model.fit(X_cov, treat)
+    propensity = ps_model.predict_proba(X_cov)[:, 1]
+
+    # 提取协变量矩阵用于SMD
+    X_trans = ps_model.named_steps["preprocessor"].transform(
+        ps_model.named_steps["te"].transform(X_cov)
+    )
+    # 将稀疏矩阵转为数组
+    if hasattr(X_trans, "toarray"):
+        X_trans = X_trans.toarray()
+
+    # Step2: 最近邻1:1匹配（caliper=0.05），不放回
+    caliper = 0.05
+    idx_t = np.where(treat == 1)[0]
+    idx_c = np.where(treat == 0)[0]
+    ps_t = propensity[idx_t]
+    ps_c = propensity[idx_c]
+
+    # 按倾向得分排序，双指针贪心匹配
+    order_t = np.argsort(ps_t)
+    order_c = np.argsort(ps_c)
+    ps_t_sorted = ps_t[order_t]
+    ps_c_sorted = ps_c[order_c]
+    idx_t_sorted = idx_t[order_t]
+    idx_c_sorted = idx_c[order_c]
+
+    matched_pairs: list[tuple[int, int]] = []
+    j = 0
+    used_c = set()
+    for i in range(len(ps_t_sorted)):
+        pt = ps_t_sorted[i]
+        # 推进控制组指针到接近pt的位置
+        while j < len(ps_c_sorted) - 1 and ps_c_sorted[j] < pt:
+            j += 1
+        # 候选控制：j与j-1中更近者
+        candidates = []
+        if j < len(ps_c_sorted):
+            candidates.append(j)
+        if j - 1 >= 0:
+            candidates.append(j - 1)
+        # 选择距离最小且在caliper内且未使用的控制
+        best_c = None
+        best_d = None
+        for cj in candidates:
+            if cj < 0 or cj >= len(ps_c_sorted):
+                continue
+            if cj in used_c:
+                continue
+            d = abs(ps_c_sorted[cj] - pt)
+            if d <= caliper and (best_d is None or d < best_d):
+                best_d = d
+                best_c = cj
+        if best_c is not None:
+            used_c.add(best_c)
+            matched_pairs.append((idx_t_sorted[i], idx_c_sorted[best_c]))
+
+    # Step3: 计算匹配前后SMD，检验阈值
+    X_t = X_trans[idx_t, :]
+    X_c = X_trans[idx_c, :]
+    smd_before = _compute_smd(X_t, X_c)
+
+    if matched_pairs:
+        mt_idx = np.array([p[0] for p in matched_pairs])
+        mc_idx = np.array([p[1] for p in matched_pairs])
+        X_t_matched = X_trans[mt_idx, :]
+        X_c_matched = X_trans[mc_idx, :]
+        smd_after = _compute_smd(X_t_matched, X_c_matched)
+    else:
+        smd_after = np.array([])
+
+    smd_before_max = float(np.nanmax(smd_before)) if smd_before.size > 0 else np.nan
+    smd_after_max = float(np.nanmax(smd_after)) if smd_after.size > 0 else np.nan
+    smd_after_prop_under_01 = float(np.mean(smd_after < 0.1)) if smd_after.size > 0 else 0.0
+
+    # Step4: 估计ATT（配对差的平均），并给出95%CI
+    att = np.nan
+    ci_low = np.nan
+    ci_high = np.nan
+    n_pairs = len(matched_pairs)
+    if n_pairs > 0:
+        y_t = y[mt_idx]
+        y_c = y[mc_idx]
+        diffs = y_t - y_c
+        att = float(np.mean(diffs))
+        sd = float(np.std(diffs, ddof=1)) if n_pairs > 1 else 0.0
+        se = sd / np.sqrt(n_pairs) if n_pairs > 1 else 0.0
+        ci_low = att - 1.96 * se
+        ci_high = att + 1.96 * se
+
+    # 输出报告
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = MODEL_DIR / "psm_deposit_report.md"
+    lines = []
+    lines.append("# PSM：定金金额（5000 vs 2000）对锁单率的因果影响\n")
+    lines.append("\n## Step1 倾向得分(Logistic)\n")
+    lines.append(f"- 样本量：T(高定金)={len(idx_t)}，C(低定金)={len(idx_c)}\n")
+    # 评估倾向模型的可分性（AUC of treat prediction）
+    try:
+        auc_ps = roc_auc_score(treat, propensity)
+        lines.append(f"- 倾向模型AUC（T预测）: {auc_ps:.4f}\n")
+    except Exception:
+        lines.append("- 倾向模型AUC（T预测）: 计算失败\n")
+
+    lines.append("\n## Step2 最近邻匹配（1:1，caliper=0.05）\n")
+    lines.append(f"- 匹配成功对数：{n_pairs}\n")
+    lines.append(f"- caliper: 0.05\n")
+
+    lines.append("\n## Step3 平衡检验（SMD）\n")
+    lines.append(f"- 匹配前最大SMD: {smd_before_max:.4f}\n")
+    lines.append(f"- 匹配后最大SMD: {smd_after_max:.4f}\n")
+    lines.append(f"- 匹配后SMD<0.1的比例: {smd_after_prop_under_01:.3f}\n")
+
+    lines.append("\n## Step4 ATT（平均处理效应-已处理）\n")
+    lines.append(f"- ATT（锁单率差）：{att:.4f}\n")
+    lines.append(f"- 95%CI: [{ci_low:.4f}, {ci_high:.4f}]\n")
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+    return {
+        "n_treated": int(len(idx_t)),
+        "n_control": int(len(idx_c)),
+        "n_pairs": int(n_pairs),
+        "smd_before_max": smd_before_max,
+        "smd_after_max": smd_after_max,
+        "smd_after_prop_under_01": smd_after_prop_under_01,
+        "att": att,
+        "att_ci": (ci_low, ci_high),
+        "report_path": str(report_path),
+    }
+
+
 def predict_new(sample: Dict[str, Any]) -> float:
     """根据新客户特征返回购买概率（1 的概率）。"""
     saved = joblib.load(MODEL_PATH)
@@ -390,6 +759,31 @@ def predict_new(sample: Dict[str, Any]) -> float:
 
 def main():
     df = build_dataset()
+    # 先输出定金影响的对比分析
+    try:
+        dep_stats = analyze_deposit_influence(df)
+        print("定金对锁单率的影响（AUC对比）：")
+        print(f"- base（不含定金）: {dep_stats['auc_base']:.4f}")
+        print(f"- deposit-only（仅定金）: {dep_stats['auc_deposit_only']:.4f}")
+        print(f"- full（加入定金）: {dep_stats['auc_full']:.4f}")
+        if dep_stats.get("deposit_coef_full") is not None:
+            print(f"full 模型中定金系数: {dep_stats['deposit_coef_full']:.6f}")
+        print(f"报告已保存到: {dep_stats['report_path']}")
+    except Exception as e:
+        print("定金影响分析失败:", e)
+
+    # 执行PSM因果分析（LS9/CM2专用）
+    try:
+        psm_stats = psm_deposit_analysis()
+        print("\nPSM（倾向得分匹配）分析：")
+        print(f"- 样本量：T={psm_stats['n_treated']}, C={psm_stats['n_control']}, 配对={psm_stats['n_pairs']}")
+        print(f"- SMD前最大={psm_stats['smd_before_max']:.4f}，后最大={psm_stats['smd_after_max']:.4f}，后SMD<0.1比例={psm_stats['smd_after_prop_under_01']:.3f}")
+        ci = psm_stats['att_ci']
+        print(f"- ATT={psm_stats['att']:.4f}，95%CI=[{ci[0]:.4f}, {ci[1]:.4f}]")
+        print(f"PSM报告已保存到: {psm_stats['report_path']}")
+    except Exception as e:
+        print("PSM分析失败:", e)
+
     stats = train_model(df)
     print("模型训练完成：")
     print(f"最佳模型: {stats['best_model_name']}")

@@ -111,6 +111,7 @@ def summarize_lock_view_for_period(
     pay_col: str,
     refund_col: str,
     lock_col: str,
+    deposit_col: str,
     start: pd.Timestamp,
     end: pd.Timestamp,
     window_days: int,
@@ -134,10 +135,21 @@ def summarize_lock_view_for_period(
     df_lock = df[~df[lock_col].isna()].copy()
     df_pay = df[~df[pay_col].isna()].copy()
     df_refund = df[~df[refund_col].isna()].copy()
+    df_deposit = df[~df[deposit_col].isna()].copy()
 
     # 锁单窗口：[end, end+N)（半开区间，上界不含）
     in_end_dN_lock = df_lock[(df_lock[lock_col] >= d_end) & (df_lock[lock_col] < d_end_plus_n)]
     g_lock = in_end_dN_lock.groupby(group_col).size().rename(f"locks_dend_d{window_days}")
+
+    # 大定：Deposit_Payment_Time 在 [end, end+N)
+    in_end_dN_deposit = df_deposit[(df_deposit[deposit_col] >= d_end) & (df_deposit[deposit_col] < d_end_plus_n)]
+    g_deposit = in_end_dN_deposit.groupby(group_col).size().rename(f"deposit_dend_d{window_days}")
+
+    # 全周期大定/小订数：满足 1) 大定在 [end, end+N) 或 2) 小订在 [start, end+N)
+    mask_deposit_window = (~df[deposit_col].isna()) & (df[deposit_col] >= d_end) & (df[deposit_col] < d_end_plus_n)
+    mask_pay_ext_window = (~df[pay_col].isna()) & (df[pay_col] >= start) & (df[pay_col] < d_end_plus_n)
+    union_df = df[mask_deposit_window | mask_pay_ext_window]
+    g_union = union_df.groupby(group_col).size().rename(f"full_deposit_or_intention_dend_d{window_days}")
 
     # 小订（支付在全周期 [start, end]）
     in_full_pay = df_pay[(df_pay[pay_col] >= start) & (df_pay[pay_col] <= end)]
@@ -158,7 +170,7 @@ def summarize_lock_view_for_period(
     refund_in_window = df_refund_paid[mask_pay_period_r & mask_refund_window & mask_pay_before_refund]
     g_refund = refund_in_window.groupby(group_col).size().rename(f"refund_by_end_plus_{window_days}d")
 
-    out = pd.concat([g_lock, g_pay, g_retained, g_refund], axis=1).fillna(0).astype(int).reset_index()
+    out = pd.concat([g_lock, g_deposit, g_union, g_pay, g_retained, g_refund], axis=1).fillna(0).astype(int).reset_index()
 
     # 比率列（保留一位小数，百分比格式）
     conv_ratio = (
@@ -206,10 +218,15 @@ def main():
     lock_col = resolve_column(df, [
         "lock_time", "Lock_Time", "锁单时间", "锁单日期"
     ])
+    deposit_col = resolve_column(df, [
+        "Deposit_Payment_Time", "deposit_payment_time", "大定支付时间", "大定时间"
+    ])
 
     # 转为时间类型
     df[pay_col] = coerce_datetime(df[pay_col])
     df[refund_col] = coerce_datetime(df[refund_col])
+    df[lock_col] = coerce_datetime(df[lock_col])
+    df[deposit_col] = coerce_datetime(df[deposit_col])
 
     # 输出车型分组所有取值
     unique_groups = sorted(df[group_col].astype(str).unique())
@@ -248,10 +265,12 @@ def main():
         all_rows.append(res)
 
         # 锁单视角统计
-        lock_res = summarize_lock_view_for_period(df, group_col, pay_col, refund_col, lock_col, start, end, args.window_days)
+        lock_res = summarize_lock_view_for_period(df, group_col, pay_col, refund_col, lock_col, deposit_col, start, end, args.window_days)
         lock_res = lock_res[lock_res[group_col].astype(str).map(_normalize) == norm_key]
         if lock_res.empty:
             lock_col_name = f"locks_dend_d{args.window_days}"
+            deposit_col_name = f"deposit_dend_d{args.window_days}"
+            union_col_name = f"full_deposit_or_intention_dend_d{args.window_days}"
             retained_col_name = f"retained_locks_dend_d{args.window_days}"
             refund_col_name2 = f"refund_by_end_plus_{args.window_days}d"
             conv_ratio_name = f"conversion_rate_dend_d{args.window_days}"
@@ -259,6 +278,8 @@ def main():
             lock_res = pd.DataFrame({
                 group_col: [key],
                 lock_col_name: [0],
+                deposit_col_name: [0],
+                union_col_name: [0],
                 "payment_full_period": [0],
                 retained_col_name: [0],
                 refund_col_name2: [0],
@@ -282,6 +303,8 @@ def main():
     start_ratio_col = f"refund_to_payment_ratio_d1_d{args.window_days}"
     lock_col_name = f"locks_dend_d{args.window_days}"
     retained_col_name = f"retained_locks_dend_d{args.window_days}"
+    deposit_col_name = f"deposit_dend_d{args.window_days}"
+    union_col_name = f"full_deposit_or_intention_dend_d{args.window_days}"
     refund_by_end_col = f"refund_by_end_plus_{args.window_days}d"
     conv_ratio_name = f"conversion_rate_dend_d{args.window_days}"
     refund_ratio_name = f"refund_rate_by_end_plus_{args.window_days}d"
@@ -302,10 +325,12 @@ def main():
         "start": "开始日期",
         "end": "结束日期",
         group_col: "车型分组",
-        lock_col_name: f"上市发布会后{args.window_days}日锁单数",
+        lock_col_name: f"上市后{args.window_days}日锁单数",
+        deposit_col_name: f"上市后{args.window_days}日大定数",
+        union_col_name: "全周期大定/小订数",
         "payment_full_period": "全周期小订数",
         retained_col_name: "小订留存锁单数",
-        refund_by_end_col: f"上市发布会后{args.window_days}日小订退订数",
+        refund_by_end_col: f"上市后{args.window_days}日小订退订数",
         conv_ratio_name: "小订转化率",
         refund_ratio_name: "小订退订率",
     }
@@ -356,7 +381,7 @@ def main():
     </head>
     <body>
       <h1>周期统计与锁单视角概览</h1>
-      <div class=\"desc\">本页包含两类统计：起始窗口（[start, start+N)）的支付/退订对比与上市发布会后窗口（[end, end+N)）的锁单/留存/退订对比。</div>
+      <div class=\"desc\">本页包含两类统计：起始窗口（[start, start+N)）的支付/退订对比与上市后窗口（[end, end+N)）的锁单/留存/退订对比。</div>
 
       <h2>起始窗口统计（支付/退订）</h2>
       <div class=\"links\">
@@ -412,11 +437,12 @@ def main():
                 res_local.insert(1, "start", start_local.date())
                 res_local.insert(2, "end", end_local.date())
                 all_rows_local.append(res_local)
-
-                lock_res_local = summarize_lock_view_for_period(df, group_col, pay_col, refund_col, lock_col, start_local, end_local, n)
+                lock_res_local = summarize_lock_view_for_period(df, group_col, pay_col, refund_col, lock_col, deposit_col, start_local, end_local, n)
                 lock_res_local = lock_res_local[lock_res_local[group_col].astype(str).map(_normalize) == norm_key_local]
                 if lock_res_local.empty:
                     lock_col_name_local = f"locks_dend_d{n}"
+                    deposit_col_name_local = f"deposit_dend_d{n}"
+                    union_col_name_local = f"full_deposit_or_intention_dend_d{n}"
                     retained_col_name_local = f"retained_locks_dend_d{n}"
                     refund_col_name2_local = f"refund_by_end_plus_{n}d"
                     conv_ratio_name_local = f"conversion_rate_dend_d{n}"
@@ -424,6 +450,8 @@ def main():
                     lock_res_local = pd.DataFrame({
                         group_col: [key],
                         lock_col_name_local: [0],
+                        deposit_col_name_local: [0],
+                        union_col_name_local: [0],
                         "payment_full_period": [0],
                         retained_col_name_local: [0],
                         refund_col_name2_local: [0],
@@ -443,6 +471,8 @@ def main():
             start_ratio_col_local = f"refund_to_payment_ratio_d1_d{n}"
             lock_col_name_local = f"locks_dend_d{n}"
             retained_col_name_local = f"retained_locks_dend_d{n}"
+            deposit_col_name_local = f"deposit_dend_d{n}"
+            union_col_name_local = f"full_deposit_or_intention_dend_d{n}"
             refund_by_end_col_local = f"refund_by_end_plus_{n}d"
             conv_ratio_name_local = f"conversion_rate_dend_d{n}"
             refund_ratio_name_local = f"refund_rate_by_end_plus_{n}d"
@@ -463,10 +493,12 @@ def main():
                 "start": "开始日期",
                 "end": "结束日期",
                 group_col: "车型分组",
-                lock_col_name_local: f"上市发布会后{n}日锁单数",
+                lock_col_name_local: f"上市后{n}日锁单数",
+                deposit_col_name_local: f"上市后{n}日大定数",
+                union_col_name_local: "全周期大定/小订数",
                 "payment_full_period": "全周期小订数",
                 retained_col_name_local: "小订留存锁单数",
-                refund_by_end_col_local: f"上市发布会后{n}日小订退订数",
+                refund_by_end_col_local: f"上市后{n}日小订退订数",
                 conv_ratio_name_local: "小订转化率",
                 refund_ratio_name_local: "小订退订率",
             }
@@ -480,12 +512,12 @@ def main():
             return final_cn_local, final_lock_cn_local, str(save_path), str(save_lock_path)
 
         with gr.Blocks(title="周期统计与锁单视角概览") as demo:
-            gr.Markdown("### 起始窗口与上市发布会后视角统计\n- 支持调整 N 并实时更新表格\n- 表格支持复制与滚动查看")
+            gr.Markdown("### 起始窗口与上市后视角统计\n- 支持调整 N 并实时更新表格\n- 表格支持复制与滚动查看")
             n_slider = gr.Slider(minimum=1, maximum=30, step=1, value=args.window_days, label="窗口天数 N")
             df_start = gr.Dataframe(value=final_cn, label="起始窗口统计（支付/退订）", interactive=True)
-            df_lock = gr.Dataframe(value=final_lock_cn, label="上市发布会后统计（锁单/留存/退订）", interactive=True)
+            df_lock = gr.Dataframe(value=final_lock_cn, label="上市后统计（锁单/留存/退订）", interactive=True)
             dl1 = gr.DownloadButton("下载起始窗口CSV", value=str(save_path))
-            dl2 = gr.DownloadButton("下载发布会后窗口CSV", value=str(save_lock_path))
+            dl2 = gr.DownloadButton("下载上市后窗口CSV", value=str(save_lock_path))
 
             def on_change(n):
                 fc, fl, p1, p2 = compute_tables_for_n(int(n))
