@@ -8,6 +8,7 @@
 import sys
 import os
 import pandas as pd
+import argparse
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from ab_comparison_analysis import ABComparisonAnalyzer
@@ -411,6 +412,18 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     
     # 统计信息
     print(f"\n📈 统计信息:")
+    # 入参车型在锁单范围内的总用户数（Lock_Time非空 & Order Number非空）
+    try:
+        vehicle_total_users = df[
+            (df['车型分组'] == vehicle_type) &
+            (df['Lock_Time'].notna()) &
+            (df['Order Number'].notna()) &
+            (df['Lock_Time'] >= lock_start_datetime) &
+            (df['Lock_Time'] <= lock_end_datetime)
+        ]['Buyer Identity No'].nunique()
+        print(f"- 入参车型的总用户数（锁单范围内）: {vehicle_total_users:,}")
+    except Exception as e:
+        print(f"- 入参车型总用户数统计失败: {e}")
     print(f"- 符合条件的复购用户数: {len(filtered_repeat_buyer_ids):,}")
     print(f"- 复购用户总订单数（包含早期订单）: {len(result_df):,}")
     print(f"- 符合条件的订单数: {len(result_df[result_df['订单类型'] == '符合条件订单']):,}")
@@ -439,17 +452,27 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     return result_df
 
 if __name__ == "__main__":
-    # 运行复购用户筛选功能测试
-    test_results = test_new_repeat_buyer_feature()
-    print(f"\n� 测试结果摘要: {test_results}")
-    
-    # 运行订单清单筛选
-    order_list = get_specific_order_list()
-    
-    # 运行复购用户订单清单获取（锁单时间2025-09-10～2025-10-14，车型CM2）
+    parser = argparse.ArgumentParser(description="复购用户订单清单导出")
+    parser.add_argument("--reference-date", default="2025-09-10", help="参考日期，用于判定复购（YYYY-MM-DD）")
+    parser.add_argument("--lock-start-date", default="2025-09-10", help="锁单开始日期（YYYY-MM-DD）")
+    parser.add_argument("--lock-end-date", default="2025-10-14", help="锁单结束日期（YYYY-MM-DD）")
+    parser.add_argument("--vehicle-type", default="CM2", help="车型分组，如 LS9 或 CM2")
+    parser.add_argument("--skip-tests", action="store_true", help="跳过内置测试与示例筛选，仅导出复购清单")
+
+    args = parser.parse_args()
+
+    if not args.skip_tests:
+        # 运行复购用户筛选功能测试
+        test_results = test_new_repeat_buyer_feature()
+        print(f"\n� 测试结果摘要: {test_results}")
+
+        # 运行订单清单筛选（示例）
+        order_list = get_specific_order_list()
+
+    # 根据参数导出指定车型的复购用户订单清单
     repeat_buyer_orders = get_repeat_buyer_orders_list(
-        reference_date="2025-09-10",
-        lock_start_date="2025-09-10", 
-        lock_end_date="2025-10-14",
-        vehicle_type="CM2"
+        reference_date=args.reference_date,
+        lock_start_date=args.lock_start_date,
+        lock_end_date=args.lock_end_date,
+        vehicle_type=args.vehicle_type
     )

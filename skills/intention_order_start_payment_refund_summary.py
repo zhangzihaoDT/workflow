@@ -4,8 +4,15 @@ import argparse
 import json
 from pathlib import Path
 from typing import Dict, List
+import os
+import math
+import numpy as np
+from plotly.subplots import make_subplots
+import plotly.graph_objs as go
+import plotly.offline as pyo
 
 import pandas as pd
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -191,6 +198,377 @@ def summarize_lock_view_for_period(
     return out
 
 
+def build_period_small_multiples_div(
+    df: pd.DataFrame,
+    periods: Dict[str, Dict[str, str]],
+    group_col: str,
+    pay_col: str,
+    refund_col: str,
+    lock_col: str,
+    window_days: int,
+    y_range: Tuple[float, float] | None = None,
+    allowed_groups: List[str] | None = None,
+) -> str:
+    """
+    生成分车型周期的小多图矩阵（散点）：
+    - X 轴：累计退订率相对于前一日的减差（pct）
+    - Y 轴：累计小订转化率相对于前一日的减差（pct）
+    日度定义：第 k 天窗口为 [end+(k-1), end+k)
+    分母统一使用该周期内的全周期小订数（支付在 [start, end]）。
+    """
+    if allowed_groups is not None and len(allowed_groups) > 0:
+        allowed_norm = { _normalize(v) for v in allowed_groups }
+        period_keys = [k for k in periods.keys() if _normalize(k) in allowed_norm]
+    else:
+        period_keys = list(periods.keys())
+    n = len(period_keys)
+    if n == 0:
+        return ""
+
+    cols = 3
+    rows = math.ceil(n / cols)
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=period_keys)
+    # 收集全局轴范围
+    x_all: List[float] = []
+    y_all: List[float] = []
+
+    for idx, key in enumerate(period_keys):
+        rng = periods[key]
+        start = pd.to_datetime(rng.get("start"), errors="coerce")
+        end = pd.to_datetime(rng.get("end"), errors="coerce")
+        if pd.isna(start) or pd.isna(end):
+            continue
+
+        norm_key = _normalize(key)
+        df_group = df[df[group_col].astype(str).map(_normalize) == norm_key].copy()
+
+        # 分母：全周期小订数（支付在 [start, end]）
+        df_pay = df_group[~df_group[pay_col].isna()].copy()
+        denom = len(df_pay[(df_pay[pay_col] >= start) & (df_pay[pay_col] <= end)])
+        if denom == 0:
+            # 没有小订分母则跳过该周期
+            denom = 1  # 防止除0，展示为 0 线
+
+        ys_conv = []  # 累计转化率环比减差（%）
+        xs_refund_change = []  # 累计退订率环比减差（%）
+        prev_cum_refund_rate = 0.0
+        prev_cum_conv_rate = 0.0
+
+        # 预先筛选含锁单与退订的数据，减少重复开销
+        df_lock = df_group[(~df_group[pay_col].isna()) & (~df_group[lock_col].isna())].copy()
+        df_refund = df_group[(~df_group[refund_col].isna()) & (~df_group[pay_col].isna())].copy()
+
+        for k in range(1, window_days + 1):
+            day_start = end + pd.Timedelta(days=k - 1)
+            day_end = end + pd.Timedelta(days=k)
+
+            # 累计留存锁单（支付在 [start, end] 且锁单在 [end, day_end)）
+            mask_pay_period = (df_lock[pay_col] >= start) & (df_lock[pay_col] <= end)
+            mask_lock_cum_to_day = (df_lock[lock_col] >= end) & (df_lock[lock_col] < day_end)
+            locks_cum = len(df_lock[mask_pay_period & mask_lock_cum_to_day])
+            cum_conv_rate = (locks_cum / denom) * 100.0
+            # Y 轴为累计转化率的环比减差（Δ）
+            ys_conv.append(cum_conv_rate - prev_cum_conv_rate)
+            prev_cum_conv_rate = cum_conv_rate
+
+            # 累计退订（支付在 [start, end]，退款在 [end, day_end)，且支付时间早于退款时间）
+            mask_pay_period_r = (df_refund[pay_col] >= start) & (df_refund[pay_col] <= end)
+            mask_refund_cum_to_day = (df_refund[refund_col] >= end) & (df_refund[refund_col] < day_end)
+            mask_pay_before_refund = df_refund[pay_col] < df_refund[refund_col]
+            refunds_cum = len(df_refund[mask_pay_period_r & mask_refund_cum_to_day & mask_pay_before_refund])
+            cum_refund_rate = (refunds_cum / denom) * 100.0
+
+            # X 轴为累计退订率的环比减差（Δ）
+            xs_refund_change.append(cum_refund_rate - prev_cum_refund_rate)
+            prev_cum_refund_rate = cum_refund_rate
+
+        # 更新全局范围集合
+        x_all.extend(xs_refund_change)
+        y_all.extend(ys_conv)
+
+        r = (idx // cols) + 1
+        c = (idx % cols) + 1
+        fig.add_trace(
+            go.Scatter(
+                x=xs_refund_change,
+                y=ys_conv,
+                mode="markers",
+                marker=dict(size=7, color="#005783"),
+                text=[f"Day {k}" for k in range(1, window_days + 1)],
+                hovertemplate="Day %{text}<br>X: 累计退订率Δ %{x:.2f}%%<br>Y: 累计转化率Δ %{y:.2f}%%<extra></extra>",
+                name=key,
+            ),
+            row=r,
+            col=c,
+        )
+
+        # 添加 LOWESS 拟合曲线（若点数足够）
+        if len(xs_refund_change) >= 3:
+            try:
+                sm = lowess(np.array(ys_conv, dtype=float), np.array(xs_refund_change, dtype=float), frac=0.6, it=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=sm[:, 0],
+                        y=sm[:, 1],
+                        mode="lines",
+                        line=dict(color="#D62728", width=2),
+                        hovertemplate="LOWESS<br>X %{x:.2f}%%<br>Y %{y:.2f}%%<extra></extra>",
+                        name=f"{key}-LOWESS",
+                    ),
+                    row=r,
+                    col=c,
+                )
+            except Exception:
+                pass
+
+        # 轴标题仅在边缘显示，避免拥挤
+        fig.update_xaxes(title_text="累计退订率环比减差(%)", row=r, col=c)
+        fig.update_yaxes(title_text="累计小订转化率环比减差(%)", row=r, col=c)
+
+    fig.update_layout(
+        height=max(300 * rows, 360),
+        width=1100,
+        showlegend=False,
+        title_text="分车型周期小多图（1～N日：Y=累计转化率环比减差，X=累计退订率环比减差）",
+        margin=dict(l=40, r=40, t=60, b=40),
+    )
+    # 统一所有子图的轴范围（支持外部 y_range 覆写）
+    if len(x_all) > 0 and len(y_all) > 0:
+        x_min, x_max = min(x_all), max(x_all)
+        y_min_auto, y_max_auto = min(y_all), max(y_all)
+        if x_min == x_max:
+            x_min -= 1.0
+            x_max += 1.0
+        x_pad = (x_max - x_min) * 0.05
+        x_range = [x_min - x_pad, x_max + x_pad]
+
+        if y_range is None:
+            if y_min_auto == y_max_auto:
+                y_min_auto -= 1.0
+                y_max_auto += 1.0
+            y_pad = (y_max_auto - y_min_auto) * 0.05
+            y_range_eff = [y_min_auto - y_pad, y_max_auto + y_pad]
+        else:
+            y_min_eff, y_max_eff = y_range
+            if y_min_eff >= y_max_eff:
+                y_max_eff = y_min_eff + 1.0
+            y_range_eff = [y_min_eff, y_max_eff]
+
+        for r in range(1, rows + 1):
+            for c in range(1, cols + 1):
+                fig.update_xaxes(range=x_range, row=r, col=c)
+                fig.update_yaxes(range=y_range_eff, row=r, col=c)
+    return pyo.plot(fig, include_plotlyjs="cdn", output_type="div")
+
+
+def build_period_small_multiples_fig(
+    df: pd.DataFrame,
+    periods: Dict[str, Dict[str, str]],
+    group_col: str,
+    pay_col: str,
+    refund_col: str,
+    lock_col: str,
+    window_days: int,
+    y_range: Tuple[float, float] | None = None,
+    allowed_groups: List[str] | None = None,
+) -> go.Figure:
+    if allowed_groups is not None and len(allowed_groups) > 0:
+        allowed_norm = { _normalize(v) for v in allowed_groups }
+        period_keys = [k for k in periods.keys() if _normalize(k) in allowed_norm]
+    else:
+        period_keys = list(periods.keys())
+    n = len(period_keys)
+    if n == 0:
+        return make_subplots(rows=1, cols=1, subplot_titles=["无周期数据"])
+
+    cols = 3
+    rows = math.ceil(n / cols)
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=period_keys)
+    # 收集全局轴范围
+    x_all: List[float] = []
+    y_all: List[float] = []
+
+    for idx, key in enumerate(period_keys):
+        rng = periods[key]
+        start = pd.to_datetime(rng.get("start"), errors="coerce")
+        end = pd.to_datetime(rng.get("end"), errors="coerce")
+        if pd.isna(start) or pd.isna(end):
+            continue
+
+        norm_key = _normalize(key)
+        df_group = df[df[group_col].astype(str).map(_normalize) == norm_key].copy()
+
+        df_pay = df_group[~df_group[pay_col].isna()].copy()
+        denom = len(df_pay[(df_pay[pay_col] >= start) & (df_pay[pay_col] <= end)])
+        if denom == 0:
+            denom = 1
+
+        ys_conv = []
+        xs_refund_change = []
+        prev_cum_refund_rate = 0.0
+        prev_cum_conv_rate = 0.0
+
+        df_lock = df_group[(~df_group[pay_col].isna()) & (~df_group[lock_col].isna())].copy()
+        df_refund = df_group[(~df_group[refund_col].isna()) & (~df_group[pay_col].isna())].copy()
+
+        for k in range(1, window_days + 1):
+            day_start = end + pd.Timedelta(days=k - 1)
+            day_end = end + pd.Timedelta(days=k)
+
+            mask_pay_period = (df_lock[pay_col] >= start) & (df_lock[pay_col] <= end)
+            mask_lock_cum_to_day = (df_lock[lock_col] >= end) & (df_lock[lock_col] < day_end)
+            locks_cum = len(df_lock[mask_pay_period & mask_lock_cum_to_day])
+            cum_conv_rate = (locks_cum / denom) * 100.0
+            ys_conv.append(cum_conv_rate - prev_cum_conv_rate)
+            prev_cum_conv_rate = cum_conv_rate
+
+            mask_pay_period_r = (df_refund[pay_col] >= start) & (df_refund[pay_col] <= end)
+            mask_refund_cum_to_day = (df_refund[refund_col] >= end) & (df_refund[refund_col] < day_end)
+            mask_pay_before_refund = df_refund[pay_col] < df_refund[refund_col]
+            refunds_cum = len(df_refund[mask_pay_period_r & mask_refund_cum_to_day & mask_pay_before_refund])
+            cum_refund_rate = (refunds_cum / denom) * 100.0
+
+            xs_refund_change.append(cum_refund_rate - prev_cum_refund_rate)
+            prev_cum_refund_rate = cum_refund_rate
+
+        # 更新全局范围集合
+        x_all.extend(xs_refund_change)
+        y_all.extend(ys_conv)
+
+        r = (idx // cols) + 1
+        c = (idx % cols) + 1
+        fig.add_trace(
+            go.Scatter(
+                x=xs_refund_change,
+                y=ys_conv,
+                mode="markers",
+                marker=dict(size=7, color="#005783"),
+                text=[f"Day {k}" for k in range(1, window_days + 1)],
+                hovertemplate="Day %{text}<br>X: 退订率Δ %{x:.2f}%%<br>Y: 转化率 %{y:.2f}%%<extra></extra>",
+                name=key,
+            ),
+            row=r,
+            col=c,
+        )
+
+        # 添加 LOWESS 拟合曲线（若点数足够）
+        if len(xs_refund_change) >= 3:
+            try:
+                sm = lowess(np.array(ys_conv, dtype=float), np.array(xs_refund_change, dtype=float), frac=0.6, it=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=sm[:, 0],
+                        y=sm[:, 1],
+                        mode="lines",
+                        line=dict(color="#D62728", width=2),
+                        hovertemplate="LOWESS<br>X %{x:.2f}%%<br>Y %{y:.2f}%%<extra></extra>",
+                        name=f"{key}-LOWESS",
+                    ),
+                    row=r,
+                    col=c,
+                )
+            except Exception:
+                pass
+
+        fig.update_xaxes(title_text="累计退订率环比减差(%)", row=r, col=c)
+        fig.update_yaxes(title_text="累计小订转化率环比减差(%)", row=r, col=c)
+
+    fig.update_layout(
+        height=max(300 * rows, 360),
+        # width=1100,
+        showlegend=False,
+        title_text="分车型周期小多图（1～N日：Y=累计转化率环比减差，X=累计退订率环比减差）",
+        margin=dict(l=40, r=40, t=60, b=40),
+    )
+    # 统一所有子图的轴范围（支持外部 y_range 覆写）
+    if len(x_all) > 0 and len(y_all) > 0:
+        x_min, x_max = min(x_all), max(x_all)
+        y_min_auto, y_max_auto = min(y_all), max(y_all)
+        if x_min == x_max:
+            x_min -= 1.0
+            x_max += 1.0
+        x_pad = (x_max - x_min) * 0.05
+        x_range = [x_min - x_pad, x_max + x_pad]
+
+        if y_range is None:
+            if y_min_auto == y_max_auto:
+                y_min_auto -= 1.0
+                y_max_auto += 1.0
+            y_pad = (y_max_auto - y_min_auto) * 0.05
+            y_range_eff = [y_min_auto - y_pad, y_max_auto + y_pad]
+        else:
+            y_min_eff, y_max_eff = y_range
+            if y_min_eff >= y_max_eff:
+                y_max_eff = y_min_eff + 1.0
+            y_range_eff = [y_min_eff, y_max_eff]
+
+        for r in range(1, rows + 1):
+            for c in range(1, cols + 1):
+                fig.update_xaxes(range=x_range, row=r, col=c)
+                fig.update_yaxes(range=y_range_eff, row=r, col=c)
+    return fig
+
+
+def compute_global_y_range(
+    df: pd.DataFrame,
+    periods: Dict[str, Dict[str, str]],
+    group_col: str,
+    pay_col: str,
+    refund_col: str,
+    lock_col: str,
+    window_days: int,
+    allowed_groups: List[str] | None = None,
+) -> Tuple[float, float]:
+    """计算所有子图的全局 Y 轴范围（含 5% padding）。
+
+    返回 (y_min_padded, y_max_padded)。若无数据，返回 (-1.0, 1.0)。
+    """
+    if allowed_groups is not None and len(allowed_groups) > 0:
+        allowed_norm = { _normalize(v) for v in allowed_groups }
+        period_keys = [k for k in periods.keys() if _normalize(k) in allowed_norm]
+    else:
+        period_keys = list(periods.keys())
+    if len(period_keys) == 0:
+        return (-1.0, 1.0)
+
+    y_all: List[float] = []
+    for key in period_keys:
+        rng = periods.get(key, {})
+        start = pd.to_datetime(rng.get("start"), errors="coerce")
+        end = pd.to_datetime(rng.get("end"), errors="coerce")
+        if pd.isna(start) or pd.isna(end):
+            continue
+
+        norm_key = _normalize(key)
+        df_group = df[df[group_col].astype(str).map(_normalize) == norm_key].copy()
+
+        df_pay = df_group[~df_group[pay_col].isna()].copy()
+        denom = len(df_pay[(df_pay[pay_col] >= start) & (df_pay[pay_col] <= end)])
+        if denom == 0:
+            denom = 1
+
+        prev_cum_conv_rate = 0.0
+        df_lock = df_group[(~df_group[pay_col].isna()) & (~df_group[lock_col].isna())].copy()
+
+        for k in range(1, window_days + 1):
+            day_end = end + pd.Timedelta(days=k)
+            mask_pay_period = (df_lock[pay_col] >= start) & (df_lock[pay_col] <= end)
+            mask_lock_cum_to_day = (df_lock[lock_col] >= end) & (df_lock[lock_col] < day_end)
+            locks_cum = len(df_lock[mask_pay_period & mask_lock_cum_to_day])
+            cum_conv_rate = (locks_cum / denom) * 100.0
+            y_all.append(cum_conv_rate - prev_cum_conv_rate)
+            prev_cum_conv_rate = cum_conv_rate
+
+    if len(y_all) == 0:
+        return (-1.0, 1.0)
+    y_min, y_max = min(y_all), max(y_all)
+    if y_min == y_max:
+        y_min -= 1.0
+        y_max += 1.0
+    y_pad = (y_max - y_min) * 0.05
+    return (y_min - y_pad, y_max + y_pad)
+
+
 def main():
     parser = argparse.ArgumentParser(description="按车型分组输出各业务周期起始第1～N天及全周期的支付/退订统计")
     parser.add_argument("--data", default=str(DEFAULT_DATA_PATH), help="数据文件路径（parquet）")
@@ -233,6 +611,10 @@ def main():
     print("车型分组所有取值：")
     for v in unique_groups:
         print(f"- {v}")
+    # 默认选择：优先 LS9/CM2，如不存在则选择全部
+    selected_groups_default = [g for g in ["LS9", "CM2"] if g in unique_groups]
+    if not selected_groups_default:
+        selected_groups_default = unique_groups[:]
 
     # 逐周期统计
     all_rows: List[pd.DataFrame] = []
@@ -370,6 +752,17 @@ def main():
       .links a { margin-right: 16px; }
     </style>
     """
+    small_multiples_div = build_period_small_multiples_div(
+        df=df,
+        periods=periods,
+        group_col=group_col,
+        pay_col=pay_col,
+        refund_col=refund_col,
+        lock_col=lock_col,
+        window_days=args.window_days,
+        allowed_groups=selected_groups_default,
+    )
+
     html_content = f"""
     <!doctype html>
     <html lang=\"zh-CN\">
@@ -394,6 +787,10 @@ def main():
         <a href=\"{save_lock_path.name}\" download>下载 CSV：锁单视角统计</a>
       </div>
       {final_lock_cn.to_html(index=False)}
+
+      <h2>分车型周期小多图（日度变化）</h2>
+      <div class="desc">散点图：1～N 天，Y 轴为累计小订转化率相较前一日的减差（%），X 轴为累计退订率相较前一日的减差（%）。</div>
+      {small_multiples_div}
     </body>
     </html>
     """
@@ -411,7 +808,7 @@ def main():
             return
 
         # 复用已加载的数据与列解析，提供可调整 N 的重计算函数
-        def compute_tables_for_n(n: int):
+        def compute_tables_for_n(n: int, selected_groups: List[str]):
             all_rows_local: List[pd.DataFrame] = []
             all_lock_rows_local: List[pd.DataFrame] = []
             for key, rng in periods.items():
@@ -509,23 +906,140 @@ def main():
             # 覆写同一路径，保持下载按钮始终可用
             final_cn_local.to_csv(save_path, index=False)
             final_lock_cn_local.to_csv(save_lock_path, index=False)
-            return final_cn_local, final_lock_cn_local, str(save_path), str(save_lock_path)
+            # 构建新的小多图 Figure（用于 gr.Plot）
+            small_fig_local = build_period_small_multiples_fig(
+                df=df,
+                periods=periods,
+                group_col=group_col,
+                pay_col=pay_col,
+                refund_col=refund_col,
+                lock_col=lock_col,
+                window_days=n,
+                allowed_groups=selected_groups if selected_groups else selected_groups_default,
+            )
+            return final_cn_local, final_lock_cn_local, str(save_path), str(save_lock_path), small_fig_local
+
+        # 初始 Figure 供 gr.Plot 展示
+        small_multiples_fig = build_period_small_multiples_fig(
+            df=df,
+            periods=periods,
+            group_col=group_col,
+            pay_col=pay_col,
+            refund_col=refund_col,
+            lock_col=lock_col,
+            window_days=args.window_days,
+            allowed_groups=selected_groups_default,
+        )
 
         with gr.Blocks(title="周期统计与锁单视角概览") as demo:
             gr.Markdown("### 起始窗口与上市后视角统计\n- 支持调整 N 并实时更新表格\n- 表格支持复制与滚动查看")
-            n_slider = gr.Slider(minimum=1, maximum=30, step=1, value=args.window_days, label="窗口天数 N")
+            n_slider = gr.Slider(minimum=1, maximum=60, step=1, value=args.window_days, label="窗口天数 N")
             df_start = gr.Dataframe(value=final_cn, label="起始窗口统计（支付/退订）", interactive=True)
             df_lock = gr.Dataframe(value=final_lock_cn, label="上市后统计（锁单/留存/退订）", interactive=True)
             dl1 = gr.DownloadButton("下载起始窗口CSV", value=str(save_path))
             dl2 = gr.DownloadButton("下载上市后窗口CSV", value=str(save_lock_path))
+            gr.Markdown("### 分车型周期小多图（日度变化)")
+            vehicle_selector = gr.CheckboxGroup(choices=unique_groups, value=selected_groups_default, label="选择车型（多选）")
+            # 计算初始全局 Y 范围并创建统一控件
+            y_min_init, y_max_init = compute_global_y_range(
+                df=df,
+                periods=periods,
+                group_col=group_col,
+                pay_col=pay_col,
+                refund_col=refund_col,
+                lock_col=lock_col,
+                window_days=args.window_days,
+                allowed_groups=selected_groups_default,
+            )
+            y_min_slider = gr.Slider(
+                minimum=round(y_min_init, 2),
+                maximum=round(y_max_init, 2),
+                step=0.1,
+                value=round(y_min_init, 2),
+                label="Y 轴下限 Δ(%)"
+            )
+            y_max_slider = gr.Slider(
+                minimum=round(y_min_init, 2),
+                maximum=round(y_max_init, 2),
+                step=0.1,
+                value=round(y_max_init, 2),
+                label="Y 轴上限 Δ(%)"
+            )
+            plot_fig = gr.Plot(value=small_multiples_fig)
 
-            def on_change(n):
-                fc, fl, p1, p2 = compute_tables_for_n(int(n))
-                return fc, fl, p1, p2
+            def on_change(n, selected_groups):
+                fc, fl, p1, p2, fig = compute_tables_for_n(int(n), selected_groups)
+                # 根据新的 N 更新滑块范围（保持自动全局范围）
+                y_min_auto, y_max_auto = compute_global_y_range(
+                    df=df,
+                    periods=periods,
+                    group_col=group_col,
+                    pay_col=pay_col,
+                    refund_col=refund_col,
+                    lock_col=lock_col,
+                    window_days=int(n),
+                    allowed_groups=selected_groups if selected_groups else selected_groups_default,
+                )
+                y_min_upd = gr.update(minimum=round(y_min_auto, 2), maximum=round(y_max_auto, 2), value=round(y_min_auto, 2))
+                y_max_upd = gr.update(minimum=round(y_min_auto, 2), maximum=round(y_max_auto, 2), value=round(y_max_auto, 2))
+                return fc, fl, p1, p2, y_min_upd, y_max_upd, fig
 
-            n_slider.change(on_change, inputs=n_slider, outputs=[df_start, df_lock, dl1, dl2])
+            def on_y_range_change(y_min, y_max, n, selected_groups):
+                # 容错：若上限不大于下限，调整为下限+1.0
+                try:
+                    y_min_f = float(y_min)
+                    y_max_f = float(y_max)
+                except Exception:
+                    y_min_f, y_max_f = y_min_init, y_max_init
+                if y_min_f >= y_max_f:
+                    y_max_f = y_min_f + 1.0
+                fig = build_period_small_multiples_fig(
+                    df=df,
+                    periods=periods,
+                    group_col=group_col,
+                    pay_col=pay_col,
+                    refund_col=refund_col,
+                    lock_col=lock_col,
+                    window_days=int(n),
+                    y_range=(y_min_f, y_max_f),
+                    allowed_groups=selected_groups if selected_groups else selected_groups_default,
+                )
+                return fig
 
-        demo.launch(server_name="127.0.0.1", server_port=7860, share=False)
+            def on_groups_change(selected_groups, n):
+                # 根据选择的车型更新全局 Y 范围与图表
+                y_min_auto, y_max_auto = compute_global_y_range(
+                    df=df,
+                    periods=periods,
+                    group_col=group_col,
+                    pay_col=pay_col,
+                    refund_col=refund_col,
+                    lock_col=lock_col,
+                    window_days=int(n),
+                    allowed_groups=selected_groups if selected_groups else selected_groups_default,
+                )
+                y_min_upd = gr.update(minimum=round(y_min_auto, 2), maximum=round(y_max_auto, 2), value=round(y_min_auto, 2))
+                y_max_upd = gr.update(minimum=round(y_min_auto, 2), maximum=round(y_max_auto, 2), value=round(y_max_auto, 2))
+                fig = build_period_small_multiples_fig(
+                    df=df,
+                    periods=periods,
+                    group_col=group_col,
+                    pay_col=pay_col,
+                    refund_col=refund_col,
+                    lock_col=lock_col,
+                    window_days=int(n),
+                    allowed_groups=selected_groups if selected_groups else selected_groups_default,
+                )
+                return y_min_upd, y_max_upd, fig
+
+            n_slider.change(on_change, inputs=[n_slider, vehicle_selector], outputs=[df_start, df_lock, dl1, dl2, y_min_slider, y_max_slider, plot_fig])
+            y_min_slider.change(on_y_range_change, inputs=[y_min_slider, y_max_slider, n_slider, vehicle_selector], outputs=plot_fig)
+            y_max_slider.change(on_y_range_change, inputs=[y_min_slider, y_max_slider, n_slider, vehicle_selector], outputs=plot_fig)
+            vehicle_selector.change(on_groups_change, inputs=[vehicle_selector, n_slider], outputs=[y_min_slider, y_max_slider, plot_fig])
+
+        # 端口可通过环境变量 GRADIO_SERVER_PORT 配置，默认使用 7861，避免端口占用
+        port = int(os.environ.get("GRADIO_SERVER_PORT", "7861"))
+        demo.launch(server_name="127.0.0.1", server_port=port, share=False)
         return
 
 

@@ -887,9 +887,9 @@ class ABComparisonAnalyzer:
             # 为占比变化添加颜色标识
             change_value = anomaly['change']
             if change_value > 0:
-                change_display = f"<span style='color: red;'>+{change_value:.2%}</span>"
+                change_display = f"🔴 +{change_value:.2%}"
             elif change_value < 0:
-                change_display = f"<span style='color: green;'>{change_value:.2%}</span>"
+                change_display = f"🟢 {change_value:.2%}"
             else:
                 change_display = f"{change_value:.2%}"
             
@@ -898,9 +898,9 @@ class ABComparisonAnalyzer:
             if relative_change_value == float('inf'):
                 relative_change_display = "新增"
             elif relative_change_value > 0:
-                relative_change_display = f"<span style='color: red;'>+{relative_change_value:.1%}</span>"
+                relative_change_display = f"🔴 +{relative_change_value:.1%}"
             elif relative_change_value < 0:
-                relative_change_display = f"<span style='color: green;'>{relative_change_value:.1%}</span>"
+                relative_change_display = f"🟢 {relative_change_value:.1%}"
             else:
                 relative_change_display = f"{relative_change_value:.1%}"
             
@@ -1380,7 +1380,7 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
                 label="异常数据详情",
                 interactive=False,
                 wrap=True,
-                datatype=["str", "str", "str", "str", "str", "str", "str", "html", "html", "str"]
+                datatype=["str", "str", "str", "str", "str", "str", "str", "str", "str", "str"]
             )
     
     with gr.Row():
@@ -1389,7 +1389,7 @@ with gr.Blocks(title="AB对比分析工具", theme=gr.themes.Soft()) as demo:
                 label="销售代理分析对比",
                 interactive=False,
                 wrap=True,
-                datatype=["str", "str", "str", "html"]
+                datatype=["str", "str", "str", "str"]
             )
         with gr.Column(scale=1):
             time_interval_table = gr.DataFrame(

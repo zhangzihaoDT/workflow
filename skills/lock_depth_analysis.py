@@ -101,7 +101,7 @@ def filter_by_business_cycle_lock_window(
     periods: Dict[str, Dict[str, pd.Timestamp]],
     days_after_end: int = 30,
 ) -> pd.DataFrame:
-    """保留各车型在“end 日起的 30 天窗口”内锁单的订单，窗口为 [end, end+30)。
+    """保留各车型在“end 日起的 N 天窗口”内锁单的订单，窗口为 [end, end+N)。
 
     若某车型在业务定义中没有 end 或无法解析，则该车型的订单不纳入分析。
     """
@@ -202,6 +202,7 @@ def main():
     parser.add_argument("--save_csv", default=str(ROOT_DIR / "models" / "lock_depth_summary.csv"), help="汇总CSV导出路径")
     parser.add_argument("--save_html_dir", default=str(ROOT_DIR / "models"), help="箱线图保存目录")
     parser.add_argument("--business_def", default=str(BUSINESS_DEF_PATH), help="业务定义JSON（包含各车型time_periods）")
+    parser.add_argument("--lock_window_days", type=int, default=30, help="end 后窗口天数 N（窗口为 [end, end+N) ）")
     args = parser.parse_args()
 
     df = load_data(Path(args.data))
@@ -238,12 +239,12 @@ def main():
     exclude_set_norm = {_normalize(x) for x in ["LS7", "L7"]}
     df = df[~df[group_col].astype(str).map(_normalize).isin(exclude_set_norm)].copy()
 
-    # 按业务周期 end 后 30 天锁单时间窗口过滤
+    # 按业务周期 end 后 N 天锁单时间窗口过滤（默认 N=30）
     periods = load_business_periods(Path(args.business_def))
     before_cnt = len(df)
-    df = filter_by_business_cycle_lock_window(df, group_col, lock_col, periods, days_after_end=30)
+    df = filter_by_business_cycle_lock_window(df, group_col, lock_col, periods, days_after_end=int(args.lock_window_days))
     after_cnt = len(df)
-    print(f"按业务周期end后30天过滤：由 {before_cnt} 条 → 保留 {after_cnt} 条")
+    print(f"按业务周期 end 后 {int(args.lock_window_days)} 天过滤：由 {before_cnt} 条 → 保留 {after_cnt} 条")
 
     # 输出车型分组所有取值（过滤后）
     unique_groups = sorted(df[group_col].astype(str).unique())
