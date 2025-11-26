@@ -154,15 +154,15 @@ class ABComparisonAnalyzer:
         """
         repeat_buyer_ids = set()
         
-        if 'Buyer Identity No' not in self.df.columns:
+        if 'Owner Identity No' not in self.df.columns:
             return repeat_buyer_ids
         
         # 根据是否使用组合键选择分组字段
-        if use_combo_key and 'Buyer Cell Phone' in self.df.columns:
+        if use_combo_key and 'Owner Cell Phone' in self.df.columns:
             # 使用身份证号+手机号组合键
-            df_clean = self.df.dropna(subset=['Buyer Identity No', 'Buyer Cell Phone']).copy()
-            df_clean['buyer_key'] = df_clean['Buyer Identity No'].astype(str) + '_' + df_clean['Buyer Cell Phone'].astype(str)
-            buyer_groups = df_clean.groupby('buyer_key')
+            df_clean = self.df.dropna(subset=['Owner Identity No', 'Owner Cell Phone']).copy()
+            df_clean['owner_key'] = df_clean['Owner Identity No'].astype(str) + '_' + df_clean['Owner Cell Phone'].astype(str)
+            buyer_groups = df_clean.groupby('owner_key')
             
             for buyer_key, group in buyer_groups:
                 if len(group) > 1:  # 有多个订单
@@ -178,7 +178,7 @@ class ABComparisonAnalyzer:
                         repeat_buyer_ids.add(buyer_key)
         else:
             # 仅使用身份证号
-            buyer_groups = self.df.groupby('Buyer Identity No')
+            buyer_groups = self.df.groupby('Owner Identity No')
             
             for buyer_id, group in buyer_groups:
                 if len(group) > 1:  # 有多个订单
@@ -257,8 +257,8 @@ class ABComparisonAnalyzer:
         
         # 6. Parent Region Name筛选
         # 5.1 身份证号异常检测（仅在提供 Buyer Identity No 字段时生效）
-        if (not include_invalid_id) and ('Buyer Identity No' in self.df.columns):
-            id_series = self.df['Buyer Identity No']
+        if (not include_invalid_id) and ('Owner Identity No' in self.df.columns):
+            id_series = self.df['Owner Identity No']
             # 检测异常身份证号：空值、长度不足18位、校验失败
             def is_valid_id_card(id_val):
                 if pd.isna(id_val):
@@ -313,7 +313,7 @@ class ABComparisonAnalyzer:
             sample_data = sample_data[sample_data['Lock_Time'].isna()]
         
         # 12. 复购用户筛选
-        if (repeat_buyer_only or exclude_repeat_buyer) and 'Buyer Identity No' in self.df.columns:
+        if (repeat_buyer_only or exclude_repeat_buyer) and 'Owner Identity No' in self.df.columns:
             # 检查互斥性：如果同时设置两个选项，返回空结果
             if repeat_buyer_only and exclude_repeat_buyer:
                 # 同时设置两个选项时返回空DataFrame
@@ -328,10 +328,10 @@ class ABComparisonAnalyzer:
                 # 根据选择的模式进行筛选
                 if repeat_buyer_only and repeat_buyer_ids:
                     # 仅保留复购用户
-                    sample_data = sample_data[sample_data['Buyer Identity No'].isin(repeat_buyer_ids)]
+                    sample_data = sample_data[sample_data['Owner Identity No'].isin(repeat_buyer_ids)]
                 elif exclude_repeat_buyer and repeat_buyer_ids:
                     # 排除复购用户
-                    sample_data = sample_data[~sample_data['Buyer Identity No'].isin(repeat_buyer_ids)]
+                    sample_data = sample_data[~sample_data['Owner Identity No'].isin(repeat_buyer_ids)]
         
         return sample_data
     
@@ -535,13 +535,13 @@ class ABComparisonAnalyzer:
         anomalies = []
         
         # 性别分布检查
-        if 'order_gender' in sample_a.columns and 'order_gender' in sample_b.columns:
-            gender_dist_a = sample_a['order_gender'].value_counts(normalize=True)
-            gender_dist_b = sample_b['order_gender'].value_counts(normalize=True)
+        if 'owner_gender' in sample_a.columns and 'owner_gender' in sample_b.columns:
+            gender_dist_a = sample_a['owner_gender'].value_counts(normalize=True)
+            gender_dist_b = sample_b['owner_gender'].value_counts(normalize=True)
             
             # 计算绝对数量
-            gender_count_a = sample_a['order_gender'].value_counts()
-            gender_count_b = sample_b['order_gender'].value_counts()
+            gender_count_a = sample_a['owner_gender'].value_counts()
+            gender_count_b = sample_b['owner_gender'].value_counts()
             
             for gender in set(gender_dist_a.index) | set(gender_dist_b.index):
                 ratio_a = gender_dist_a.get(gender, 0)
@@ -593,12 +593,12 @@ class ABComparisonAnalyzer:
                          'relative_change': relative_change
                      })
         
-        # 年龄分布检查 - 使用buyer_age字段创建年龄段
-        if 'buyer_age' in sample_a.columns and 'buyer_age' in sample_b.columns:
+        # 年龄分布检查 - 使用owner_age字段创建年龄段
+        if 'owner_age' in sample_a.columns and 'owner_age' in sample_b.columns:
             # 创建年龄段
             def create_age_groups(df):
                 df = df.copy()
-                df['age_group'] = pd.cut(df['buyer_age'], 
+                df['age_group'] = pd.cut(df['owner_age'], 
                                        bins=[0, 25, 35, 45, 55, 100], 
                                        labels=['25岁以下', '25-35岁', '35-45岁', '45-55岁', '55岁以上'],
                                        right=False)
@@ -705,13 +705,13 @@ class ABComparisonAnalyzer:
                 sample_df = sample_df.copy()
                 sample_df['clean_store_agent_name'] = sample_df['Store Agent Name'].fillna('').astype(str).str.strip()
                 sample_df['clean_store_agent_id'] = sample_df['Store Agent Id'].fillna('').astype(str).str.strip()
-                sample_df['clean_buyer_identity'] = sample_df['Buyer Identity No'].fillna('').astype(str).str.strip()
+                sample_df['clean_owner_identity'] = sample_df['Owner Identity No'].fillna('').astype(str).str.strip()
                 
                 # 创建组合字段用于匹配
                 agent_combos = list(zip(
                     sample_df['clean_store_agent_name'],
                     sample_df['clean_store_agent_id'], 
-                    sample_df['clean_buyer_identity']
+                    sample_df['clean_owner_identity']
                 ))
                 
                 # 计算匹配的订单数
@@ -725,15 +725,15 @@ class ABComparisonAnalyzer:
                 # 无论是否使用复购用户筛选，都直接统计当前样本中的重复买家
                 
                 # 口径1：仅基于身份证号
-                buyer_identity_counts = sample_df['Buyer Identity No'].value_counts()
+                buyer_identity_counts = sample_df['Owner Identity No'].value_counts()
                 repeat_buyers = buyer_identity_counts[buyer_identity_counts >= 2]
                 repeat_buyer_orders = repeat_buyers.sum()
                 repeat_buyer_ratio = repeat_buyer_orders / total_orders if total_orders > 0 else 0.0
                 unique_repeat_buyers = len(repeat_buyers)
                 
                 # 口径2：身份证号+手机号双重匹配
-                sample_df_clean = sample_df.dropna(subset=['Buyer Identity No', 'Buyer Cell Phone'])
-                buyer_combo_key = sample_df_clean['Buyer Identity No'].astype(str) + '_' + sample_df_clean['Buyer Cell Phone'].astype(str)
+                sample_df_clean = sample_df.dropna(subset=['Owner Identity No', 'Owner Cell Phone'])
+                buyer_combo_key = sample_df_clean['Owner Identity No'].astype(str) + '_' + sample_df_clean['Owner Cell Phone'].astype(str)
                 buyer_combo_counts = buyer_combo_key.value_counts()
                 repeat_buyers_combo = buyer_combo_counts[buyer_combo_counts >= 2]
                 repeat_buyer_orders_combo = repeat_buyers_combo.sum()
@@ -741,7 +741,7 @@ class ABComparisonAnalyzer:
                 unique_repeat_buyers_combo = len(repeat_buyers_combo)
                 
                 # 计算总买家数量（基于身份证号）
-                total_unique_buyers = sample_df['Buyer Identity No'].nunique()
+                total_unique_buyers = sample_df['Owner Identity No'].nunique()
                 
                 return {
                     'total_orders': total_orders,

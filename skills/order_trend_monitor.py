@@ -2480,15 +2480,15 @@ class OrderTrendMonitor:
                 filtered_data = filtered_data.drop('Lock_Time_dt', axis=1)
             
             # 重复买家筛选
-            if not include_repeat_buyers and 'Buyer Identity No' in filtered_data.columns:
+            if not include_repeat_buyers and 'Owner Identity No' in filtered_data.columns:
                 # 口径1：基于身份证号筛选，排除重复买家
-                id_counts = filtered_data['Buyer Identity No'].value_counts()
+                id_counts = filtered_data['Owner Identity No'].value_counts()
                 single_buyers = id_counts[id_counts == 1].index
-                filtered_data = filtered_data[filtered_data['Buyer Identity No'].isin(single_buyers)]
+                filtered_data = filtered_data[filtered_data['Owner Identity No'].isin(single_buyers)]
             
-            if not include_repeat_buyers_combo and 'Buyer Identity No' in filtered_data.columns and 'Buyer Cell Phone' in filtered_data.columns:
+            if not include_repeat_buyers_combo and 'Owner Identity No' in filtered_data.columns and 'Owner Cell Phone' in filtered_data.columns:
                 # 口径2：基于身份证号+手机号组合筛选，排除重复买家
-                filtered_data['id_phone_combo'] = filtered_data['Buyer Identity No'].astype(str) + '_' + filtered_data['Buyer Cell Phone'].astype(str)
+                filtered_data['id_phone_combo'] = filtered_data['Owner Identity No'].astype(str) + '_' + filtered_data['Owner Cell Phone'].astype(str)
                 combo_counts = filtered_data['id_phone_combo'].value_counts()
                 single_combo_buyers = combo_counts[combo_counts == 1].index
                 filtered_data = filtered_data[filtered_data['id_phone_combo'].isin(single_combo_buyers)]
@@ -2626,20 +2626,20 @@ class OrderTrendMonitor:
             
             # 重复买家筛选
             if not include_repeat_buyers or not include_repeat_buyers_combo:
-                if 'Buyer Identity No' in filtered_data.columns and 'Buyer Cell Phone' in filtered_data.columns:
+                if 'Owner Identity No' in filtered_data.columns and 'Owner Cell Phone' in filtered_data.columns:
                     # 口径1：基于身份证号的重复买家筛选
                     if not include_repeat_buyers:
                         # 统计每个身份证号的订单数
-                        id_card_counts = filtered_data['Buyer Identity No'].value_counts()
+                        id_card_counts = filtered_data['Owner Identity No'].value_counts()
                         # 筛选出只有一个订单的身份证号
                         single_order_id_cards = id_card_counts[id_card_counts == 1].index
                         # 只保留非重复买家
-                        filtered_data = filtered_data[filtered_data['Buyer Identity No'].isin(single_order_id_cards)]
+                        filtered_data = filtered_data[filtered_data['Owner Identity No'].isin(single_order_id_cards)]
                     
                     # 口径2：基于身份证号+手机号组合的重复买家筛选
                     if not include_repeat_buyers_combo:
                         # 创建身份证号+手机号的组合键
-                        filtered_data['id_phone_combo'] = filtered_data['Buyer Identity No'].astype(str) + '_' + filtered_data['Buyer Cell Phone'].astype(str)
+                        filtered_data['id_phone_combo'] = filtered_data['Owner Identity No'].astype(str) + '_' + filtered_data['Owner Cell Phone'].astype(str)
                         # 统计每个组合键的订单数
                         combo_counts = filtered_data['id_phone_combo'].value_counts()
                         # 筛选出只有一个订单的组合键
@@ -2878,20 +2878,20 @@ class OrderTrendMonitor:
             
             # 重复买家筛选
             if not include_repeat_buyers or not include_repeat_buyers_combo:
-                if 'Buyer Identity No' in filtered_data.columns and 'Buyer Cell Phone' in filtered_data.columns:
+                if 'Owner Identity No' in filtered_data.columns and 'Owner Cell Phone' in filtered_data.columns:
                     # 口径1：基于身份证号的重复买家筛选
                     if not include_repeat_buyers:
                         # 统计每个身份证号的订单数
-                        id_card_counts = filtered_data['Buyer Identity No'].value_counts()
+                        id_card_counts = filtered_data['Owner Identity No'].value_counts()
                         # 筛选出只有一个订单的身份证号
                         single_order_id_cards = id_card_counts[id_card_counts == 1].index
                         # 只保留非重复买家
-                        filtered_data = filtered_data[filtered_data['Buyer Identity No'].isin(single_order_id_cards)]
+                        filtered_data = filtered_data[filtered_data['Owner Identity No'].isin(single_order_id_cards)]
                     
                     # 口径2：基于身份证号+手机号组合的重复买家筛选
                     if not include_repeat_buyers_combo:
                         # 创建身份证号+手机号的组合键
-                        filtered_data['id_phone_combo'] = filtered_data['Buyer Identity No'].astype(str) + '_' + filtered_data['Buyer Cell Phone'].astype(str)
+                        filtered_data['id_phone_combo'] = filtered_data['Owner Identity No'].astype(str) + '_' + filtered_data['Owner Cell Phone'].astype(str)
                         # 统计每个组合键的订单数
                         combo_counts = filtered_data['id_phone_combo'].value_counts()
                         # 筛选出只有一个订单的组合键
@@ -2916,7 +2916,7 @@ class OrderTrendMonitor:
                 return pd.DataFrame()
             
             # 按年龄段分组统计各车型的锁单数，调整为车型对比格式
-            if 'buyer_age' not in lock_data.columns:
+            if 'owner_age' not in lock_data.columns:
                 return pd.DataFrame()
             
             # 创建年龄段分类函数
@@ -2942,7 +2942,7 @@ class OrderTrendMonitor:
                     return '55岁以上'
             
             # 为所有数据添加年龄段
-            lock_data['年龄段'] = lock_data['buyer_age'].apply(categorize_age)
+            lock_data['年龄段'] = lock_data['owner_age'].apply(categorize_age)
             
             # 根据include_unknown参数过滤未知年龄数据
             if not include_unknown:
@@ -3127,14 +3127,14 @@ class OrderTrendMonitor:
             
             # 重复买家筛选
             if not include_repeat_buyers or not include_repeat_buyers_combo:
-                if 'Buyer Identity No' in filtered_data.columns and 'Buyer Cell Phone' in filtered_data.columns:
+                if 'Owner Identity No' in filtered_data.columns and 'Owner Cell Phone' in filtered_data.columns:
                     if not include_repeat_buyers:
-                        id_card_counts = filtered_data['Buyer Identity No'].value_counts()
+                        id_card_counts = filtered_data['Owner Identity No'].value_counts()
                         single_order_id_cards = id_card_counts[id_card_counts == 1].index
-                        filtered_data = filtered_data[filtered_data['Buyer Identity No'].isin(single_order_id_cards)]
+                        filtered_data = filtered_data[filtered_data['Owner Identity No'].isin(single_order_id_cards)]
                     
                     if not include_repeat_buyers_combo:
-                        filtered_data['id_phone_combo'] = filtered_data['Buyer Identity No'].astype(str) + '_' + filtered_data['Buyer Cell Phone'].astype(str)
+                        filtered_data['id_phone_combo'] = filtered_data['Owner Identity No'].astype(str) + '_' + filtered_data['Owner Cell Phone'].astype(str)
                         combo_counts = filtered_data['id_phone_combo'].value_counts()
                         single_order_combos = combo_counts[combo_counts == 1].index
                         filtered_data = filtered_data[filtered_data['id_phone_combo'].isin(single_order_combos)]
@@ -3150,12 +3150,12 @@ class OrderTrendMonitor:
             else:
                 return pd.DataFrame()
             
-            if lock_data.empty or 'buyer_age' not in lock_data.columns:
+            if lock_data.empty or 'owner_age' not in lock_data.columns:
                 return pd.DataFrame()
             
             # 过滤未知年龄数据
             if not include_unknown:
-                lock_data = lock_data[lock_data['buyer_age'].notna()]
+                lock_data = lock_data[lock_data['owner_age'].notna()]
             
             # 计算年龄统计信息
             result_data = []
@@ -3163,9 +3163,9 @@ class OrderTrendMonitor:
             for vehicle in selected_vehicles:
                 vehicle_data = lock_data[lock_data['车型分组'] == vehicle]
                 
-                if not vehicle_data.empty and 'buyer_age' in vehicle_data.columns:
+                if not vehicle_data.empty and 'owner_age' in vehicle_data.columns:
                     # 获取有效年龄数据（转换为数值并去除缺失）
-                    raw_ages = pd.to_numeric(vehicle_data['buyer_age'], errors='coerce').dropna()
+                    raw_ages = pd.to_numeric(vehicle_data['owner_age'], errors='coerce').dropna()
                     raw_count = int(len(raw_ages))
 
                     # 异常数据清理：去除不合理年龄与IQR法剔除离群值
@@ -3296,18 +3296,18 @@ class OrderTrendMonitor:
             # 重复买家筛选
             if not include_repeat_buyers or not include_repeat_buyers_combo:
                 # 基于身份证号识别重复买家（口径1）
-                if not include_repeat_buyers and 'Buyer Identity No' in filtered_data.columns:
+                if not include_repeat_buyers and 'Owner Identity No' in filtered_data.columns:
                     # 计算每个身份证号的订单数
-                    id_card_counts = filtered_data['Buyer Identity No'].value_counts()
+                    id_card_counts = filtered_data['Owner Identity No'].value_counts()
                     # 筛选出只有一次订单的身份证号
                     single_order_id_cards = id_card_counts[id_card_counts == 1].index
                     # 只保留单次订单的记录
-                    filtered_data = filtered_data[filtered_data['Buyer Identity No'].isin(single_order_id_cards)]
+                    filtered_data = filtered_data[filtered_data['Owner Identity No'].isin(single_order_id_cards)]
                 
                 # 基于身份证号+手机号组合识别重复买家（口径2）
-                if not include_repeat_buyers_combo and 'Buyer Identity No' in filtered_data.columns and 'Buyer Cell Phone' in filtered_data.columns:
+                if not include_repeat_buyers_combo and 'Owner Identity No' in filtered_data.columns and 'Owner Cell Phone' in filtered_data.columns:
                     # 创建身份证号+手机号的组合键
-                    filtered_data['id_phone_combo'] = filtered_data['Buyer Identity No'].astype(str) + '_' + filtered_data['Buyer Cell Phone'].astype(str)
+                    filtered_data['id_phone_combo'] = filtered_data['Owner Identity No'].astype(str) + '_' + filtered_data['Owner Cell Phone'].astype(str)
                     # 计算每个组合键的订单数
                     combo_counts = filtered_data['id_phone_combo'].value_counts()
                     # 筛选出只有一次订单的组合键
@@ -3343,8 +3343,8 @@ class OrderTrendMonitor:
                     return '未知性别'
             
             # 为所有数据添加性别分类
-            if 'order_gender' in lock_data.columns:
-                lock_data['性别'] = lock_data['order_gender'].apply(normalize_gender)
+            if 'owner_gender' in lock_data.columns:
+                lock_data['性别'] = lock_data['owner_gender'].apply(normalize_gender)
             else:
                 return pd.DataFrame()
             
@@ -3543,18 +3543,18 @@ class OrderTrendMonitor:
             # 重复买家筛选
             if not include_repeat_buyers or not include_repeat_buyers_combo:
                 # 基于身份证号识别重复买家（口径1）
-                if not include_repeat_buyers and 'Buyer Identity No' in filtered_data.columns:
+                if not include_repeat_buyers and 'Owner Identity No' in filtered_data.columns:
                     # 计算每个身份证号的订单数
-                    id_card_counts = filtered_data['Buyer Identity No'].value_counts()
+                    id_card_counts = filtered_data['Owner Identity No'].value_counts()
                     # 筛选出只有一次订单的身份证号
                     single_order_id_cards = id_card_counts[id_card_counts == 1].index
                     # 只保留单次订单的记录
-                    filtered_data = filtered_data[filtered_data['Buyer Identity No'].isin(single_order_id_cards)]
+                    filtered_data = filtered_data[filtered_data['Owner Identity No'].isin(single_order_id_cards)]
                 
                 # 基于身份证号+手机号组合识别重复买家（口径2）
-                if not include_repeat_buyers_combo and 'Buyer Identity No' in filtered_data.columns and 'Buyer Cell Phone' in filtered_data.columns:
+                if not include_repeat_buyers_combo and 'Owner Identity No' in filtered_data.columns and 'Owner Cell Phone' in filtered_data.columns:
                     # 创建身份证号+手机号的组合键
-                    filtered_data['id_phone_combo'] = filtered_data['Buyer Identity No'].astype(str) + '_' + filtered_data['Buyer Cell Phone'].astype(str)
+                    filtered_data['id_phone_combo'] = filtered_data['Owner Identity No'].astype(str) + '_' + filtered_data['Owner Cell Phone'].astype(str)
                     # 计算每个组合键的订单数
                     combo_counts = filtered_data['id_phone_combo'].value_counts()
                     # 筛选出只有一次订单的组合键
@@ -3851,13 +3851,13 @@ class OrderTrendMonitor:
                     lock_data = lock_data[~lock_data['is_weekend']]
             
             # 重复买家筛选
-            if not include_repeat_buyers and 'Buyer Identity No' in lock_data.columns:
+            if not include_repeat_buyers and 'Owner Identity No' in lock_data.columns:
                 # 口径1：基于身份证号识别重复买家，只保留首次购买
-                lock_data = lock_data.drop_duplicates(subset=['Buyer Identity No'], keep='first')
+                lock_data = lock_data.drop_duplicates(subset=['Owner Identity No'], keep='first')
             
-            if not include_repeat_buyers_combo and 'Buyer Identity No' in lock_data.columns and 'Buyer Cell Phone' in lock_data.columns:
+            if not include_repeat_buyers_combo and 'Owner Identity No' in lock_data.columns and 'Owner Cell Phone' in lock_data.columns:
                 # 口径2：基于身份证号+手机号组合识别重复买家，只保留首次购买
-                lock_data = lock_data.drop_duplicates(subset=['Buyer Identity No', 'Buyer Cell Phone'], keep='first')
+                lock_data = lock_data.drop_duplicates(subset=['Owner Identity No', 'Owner Cell Phone'], keep='first')
             
             # 城市等级筛选
             if city_levels is not None and len(city_levels) > 0 and 'license_city_level' in lock_data.columns:
@@ -4102,13 +4102,13 @@ class OrderTrendMonitor:
                     lock_data = lock_data[~lock_data['is_weekend']]
             
             # 重复买家筛选
-            if not include_repeat_buyers and 'Buyer Identity No' in lock_data.columns:
+            if not include_repeat_buyers and 'Owner Identity No' in lock_data.columns:
                 # 口径1：基于身份证号识别重复买家，只保留首次购买
-                lock_data = lock_data.drop_duplicates(subset=['Buyer Identity No'], keep='first')
+                lock_data = lock_data.drop_duplicates(subset=['Owner Identity No'], keep='first')
             
-            if not include_repeat_buyers_combo and 'Buyer Identity No' in lock_data.columns and 'Buyer Cell Phone' in lock_data.columns:
+            if not include_repeat_buyers_combo and 'Owner Identity No' in lock_data.columns and 'Owner Cell Phone' in lock_data.columns:
                 # 口径2：基于身份证号+手机号组合识别重复买家，只保留首次购买
-                lock_data = lock_data.drop_duplicates(subset=['Buyer Identity No', 'Buyer Cell Phone'], keep='first')
+                lock_data = lock_data.drop_duplicates(subset=['Owner Identity No', 'Owner Cell Phone'], keep='first')
             
             # 城市等级筛选
             if city_levels is not None and len(city_levels) > 0 and 'license_city_level' in lock_data.columns:
@@ -5196,7 +5196,7 @@ with gr.Blocks(title="订单趋势监测", theme=gr.themes.Soft()) as demo:
                         datatype=["str"] + ["html"] * 20
                     )
                     
-                    gr.Markdown("### 📊 buyer_age锁单统计")
+                    gr.Markdown("### 📊 owner_age锁单统计")
                     with gr.Row():
                         config_age_include_unknown = gr.Checkbox(
                             label="包含未知年龄数据",
@@ -5204,7 +5204,7 @@ with gr.Blocks(title="订单趋势监测", theme=gr.themes.Soft()) as demo:
                             info="取消勾选将过滤掉年龄为'未知年龄'的数据"
                         )
                     config_age_table = gr.DataFrame(
-                        label="buyer_age锁单统计表格",
+                        label="owner_age锁单统计表格",
                         interactive=False,
                         wrap=True,
                         datatype=["str"] + ["html"] * 20
@@ -5219,7 +5219,7 @@ with gr.Blocks(title="订单趋势监测", theme=gr.themes.Soft()) as demo:
                         headers=["车型", "平均年龄", "中位数", "标准差", "样本数", "异常数据数"]
                     )
                     
-                    gr.Markdown("### 📊 order_gender锁单统计")
+                    gr.Markdown("### 📊 owner_gender锁单统计")
                     with gr.Row():
                         config_gender_include_unknown = gr.Checkbox(
                             label="包含未知性别数据",
@@ -5227,7 +5227,7 @@ with gr.Blocks(title="订单趋势监测", theme=gr.themes.Soft()) as demo:
                             info="取消勾选将过滤掉性别为'未知性别'的数据"
                         )
                     config_gender_table = gr.DataFrame(
-                        label="order_gender锁单统计表格",
+                        label="owner_gender锁单统计表格",
                         interactive=False,
                         wrap=True,
                         datatype=["str"] + ["html"] * 20

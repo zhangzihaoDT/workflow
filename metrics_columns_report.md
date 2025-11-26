@@ -2,7 +2,7 @@
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/business_daily_metrics.parquet
-- **生成时间**: 2025-11-14T11:00:42
+- **生成时间**: 2025-11-26T15:32:05
 - **文件大小**: 0.12 MB
 
 ## 数据基本信息
@@ -73,25 +73,25 @@ date
 
 ## 数据概览
 - **数据文件**: /Users/zihao_/Documents/coding/dataset/formatted/intention_order_analysis.parquet
-- **生成时间**: 2025-11-14T11:00:42
-- **文件大小**: 17.84 MB
+- **生成时间**: 2025-11-26T15:32:05
+- **文件大小**: 26.90 MB
 
 ## 数据基本信息
-- **数据形状**: 366766 行 × 32 列
-- **数据完整性**: 78.92%
+- **数据形状**: 419490 行 × 36 列
+- **数据完整性**: 76.09%
 - **重复行数**: 0
 
 ## 数据类型分布
-- **数值列**: 6 个
-- **分类列**: 16 个  
+- **数值列**: 5 个
+- **分类列**: 21 个  
 - **日期列**: 10 个
 
 ## 列信息详情
 ### 数值列
-Store Agent Phone, Buyer Cell Phone, Intention Payment Time 小时, buyer_age, 开票价格, Order Number 不同计数
+Intention Payment Time 小时, owner_age, buyer_age, 开票价格, Order Number 不同计数
 
 ### 分类列
-Order Number, 车型分组, Store City, Store Name, Store Code, pre_vehicle_model_type, Store Agent Name, Store Agent Id, Buyer Identity No, first_main_channel_group, order_gender, Parent Region Name, License Province, license_city_level, License City, Product Name
+Order Number, 车型分组, Store City, Store Name, Store Code, pre_vehicle_model_type, Store Agent Name, Store Agent Id, Store Agent Phone, first_main_channel_group, Owner Cell Phone, Owner Identity No, owner_gender, Buyer Cell Phone, Buyer Identity No, order_gender, Parent Region Name, License Province, license_city_level, License City, Product Name
 
 ### 日期列
 store_create_date, Deposit_Payment_Time, Invoice_Upload_Time, Order_Create_Time, Intention_Payment_Time, intention_refund_time, deposit_refund_time, first_assign_time, Lock_Time, first_touch_time
@@ -101,24 +101,34 @@ store_create_date, Deposit_Payment_Time, Invoice_Upload_Time, Order_Create_Time,
 
 | 列名 | 缺失数量 | 缺失比例 |
 |------|----------|----------|
-| pre_vehicle_model_type | 342404 | 93.36% |
-| deposit_refund_time | 340194 | 92.76% |
-| intention_refund_time | 254226 | 69.32% |
-| Invoice_Upload_Time | 238284 | 64.97% |
-| 开票价格 | 238284 | 64.97% |
-| Lock_Time | 198075 | 54.01% |
-| Intention_Payment_Time | 196803 | 53.66% |
-| Intention Payment Time 小时 | 196803 | 53.66% |
-| Deposit_Payment_Time | 185478 | 50.57% |
-| Buyer Identity No | 141858 | 38.68% |
-| buyer_age | 135575 | 36.96% |
-| license_city_level | 2313 | 0.63% |
-| first_touch_time | 2300 | 0.63% |
-| Store City | 611 | 0.17% |
-| Store Agent Phone | 167 | 0.05% |
-| Store Agent Id | 167 | 0.05% |
-| Store Agent Name | 167 | 0.05% |
-| first_assign_time | 1 | 0.00% |
+| pre_vehicle_model_type | 395128 | 94.19% |
+| deposit_refund_time | 384130 | 91.57% |
+| intention_refund_time | 290188 | 69.18% |
+| 开票价格 | 277566 | 66.17% |
+| Invoice_Upload_Time | 277566 | 66.17% |
+| Intention Payment Time 小时 | 225763 | 53.82% |
+| Intention_Payment_Time | 225763 | 53.82% |
+| Lock_Time | 223344 | 53.24% |
+| Deposit_Payment_Time | 206736 | 49.28% |
+| owner_age | 204996 | 48.87% |
+| Owner Identity No | 196343 | 46.81% |
+| owner_gender | 188174 | 44.86% |
+| Owner Cell Phone | 177536 | 42.32% |
+| Buyer Identity No | 165105 | 39.36% |
+| buyer_age | 157515 | 37.55% |
+| License Province | 6638 | 1.58% |
+| first_touch_time | 2766 | 0.66% |
+| license_city_level | 2642 | 0.63% |
+| Store City | 1522 | 0.36% |
+| Store Agent Phone | 207 | 0.05% |
+| Store Agent Id | 207 | 0.05% |
+| Store Agent Name | 207 | 0.05% |
+| Parent Region Name | 136 | 0.03% |
+| Store Name | 136 | 0.03% |
+| store_create_date | 136 | 0.03% |
+| Store Code | 134 | 0.03% |
+| License City | 71 | 0.02% |
+| Buyer Cell Phone | 1 | 0.00% |
 | order_gender | 1 | 0.00% |
 
 ## 字段列表
@@ -132,8 +142,6 @@ store_create_date, Deposit_Payment_Time, Invoice_Upload_Time, Order_Create_Time,
 - `Store Agent Name`
 - `Store Agent Id`
 - `Store Agent Phone`
-- `Buyer Cell Phone`
-- `Buyer Identity No`
 - `Deposit_Payment_Time`
 - `Invoice_Upload_Time`
 - `Order_Create_Time`
@@ -144,6 +152,12 @@ store_create_date, Deposit_Payment_Time, Invoice_Upload_Time, Order_Create_Time,
 - `first_assign_time`
 - `Intention Payment Time 小时`
 - `Lock_Time`
+- `Owner Cell Phone`
+- `Owner Identity No`
+- `owner_age`
+- `owner_gender`
+- `Buyer Cell Phone`
+- `Buyer Identity No`
 - `buyer_age`
 - `order_gender`
 - `first_touch_time`
@@ -158,13 +172,13 @@ store_create_date, Deposit_Payment_Time, Invoice_Upload_Time, Order_Create_Time,
 # 附：CM2 配置明细字段清单（最新）
 
 ## 数据概览
-- **数据文件**: /Users/zihao_/Documents/coding/dataset/processed/CM2_Configuration_Details_transposed_20251107_123143.csv
-- **生成时间**: 2025-11-14T11:00:43
-- **文件大小**: 3.47 MB
+- **数据文件**: /Users/zihao_/Documents/coding/dataset/processed/CM2_Configuration_Details_transposed_20251121_164043.csv
+- **生成时间**: 2025-11-26T15:32:05
+- **文件大小**: 3.73 MB
 
 ## 数据基本信息
-- **数据形状**: 27952 行 × 14 列
-- **数据完整性**: 96.60%
+- **数据形状**: 29870 行 × 14 列
+- **数据完整性**: 97.12%
 - **重复行数**: 0
 
 ## 数据类型分布
@@ -187,9 +201,9 @@ invoice_time, lock_time
 
 | 列名 | 缺失数量 | 缺失比例 |
 |------|----------|----------|
-| invoice_time | 13259 | 47.43% |
-| OP-FRIDGE | 25 | 0.09% |
-| OP-LASER | 25 | 0.09% |
+| invoice_time | 11992 | 40.15% |
+| OP-FRIDGE | 26 | 0.09% |
+| OP-LASER | 26 | 0.09% |
 
 ## 字段列表
 - `order_number`

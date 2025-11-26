@@ -127,8 +127,7 @@ def test_new_repeat_buyer_feature():
     # 测试6: 检查复购用户识别
     print("\n🔍 测试6: 检查复购用户识别详情")
     if len(sample_repeat_only) > 0:
-        # 检查仅复购用户样本中的用户是否确实有多个订单
-        repeat_buyers = sample_repeat_only.groupby('Buyer Identity No').size()
+        repeat_buyers = sample_repeat_only.groupby('Owner Identity No').size()
         multi_order_users = repeat_buyers[repeat_buyers > 1]
         print(f"仅复购用户样本中有多个订单的用户数: {len(multi_order_users)}")
         print(f"仅复购用户样本中的总用户数: {len(repeat_buyers)}")
@@ -189,7 +188,7 @@ def get_specific_order_list():
     print(f"✅ 车型=CM2的订单数: {len(filtered_data)}")
     
     # 选择需要的列
-    required_columns = ['Order Number', 'Lock_Time', 'Buyer Identity No', '车型分组', 'Invoice_Upload_Time', 'Product Name']
+    required_columns = ['Order Number', 'Lock_Time', 'Owner Identity No', '车型分组', 'Invoice_Upload_Time', 'Product Name']
     
     # 检查列是否存在
     available_columns = []
@@ -232,7 +231,7 @@ def get_specific_order_list():
             # 统计信息
             print(f"\n📈 统计信息:")
             print(f"- 总订单数: {len(order_list)}")
-            print(f"- 不同买家数: {order_list['Buyer Identity No'].nunique()}")
+            print(f"- 不同买家数: {order_list['Owner Identity No'].nunique()}")
             print(f"- 锁单时间范围: {order_list['Lock_Time'].min()} 到 {order_list['Lock_Time'].max()}")
             
             # 按日期统计
@@ -276,19 +275,19 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     print(f"🚗 车型筛选: {vehicle_type}")
     
     # 确保必要的列存在
-    required_columns = ['Buyer Identity No', 'Buyer Cell Phone', 'Invoice_Upload_Time', 'Order Number', 'Lock_Time', '车型分组']
+    required_columns = ['Owner Identity No', 'Owner Cell Phone', 'Invoice_Upload_Time', 'Order Number', 'Lock_Time', '车型分组']
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         print(f"❌ 缺少必要的列: {missing_columns}")
         return pd.DataFrame()
     
     # 数据预处理
-    df['Buyer Identity No'] = df['Buyer Identity No'].fillna('').astype(str).str.strip()
+    df['Owner Identity No'] = df['Owner Identity No'].fillna('').astype(str).str.strip()
     df['Invoice_Upload_Time'] = pd.to_datetime(df['Invoice_Upload_Time'], errors='coerce')
     df['Lock_Time'] = pd.to_datetime(df['Lock_Time'], errors='coerce')
     
     # 过滤掉身份证号为空的记录
-    df = df[df['Buyer Identity No'] != '']
+    df = df[df['Owner Identity No'] != '']
     print(f"📊 过滤空身份证号后数据量: {len(df):,} 条记录")
     
     # 异常身份证号剔除逻辑（参考ab_comparison_analysis.py）
@@ -303,7 +302,7 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     
     # 保留正常身份证号，剔除异常身份证号
     original_count = len(df)
-    validity_mask = df['Buyer Identity No'].apply(is_valid_id_card)
+    validity_mask = df['Owner Identity No'].apply(is_valid_id_card)
     df = df[validity_mask]
     filtered_count = len(df)
     removed_count = original_count - filtered_count
@@ -317,7 +316,7 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     repeat_buyer_ids = set()
     
     # 按身份证号分组，找出有多个订单的买家
-    buyer_groups = df.groupby('Buyer Identity No')
+    buyer_groups = df.groupby('Owner Identity No')
     total_buyers = len(buyer_groups)
     print(f"� 总买家数: {total_buyers:,}")
     
@@ -338,7 +337,7 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
         return pd.DataFrame()
     
     # 获取所有复购用户的订单
-    all_repeat_buyer_orders = df[df['Buyer Identity No'].isin(repeat_buyer_ids)].copy()
+    all_repeat_buyer_orders = df[df['Owner Identity No'].isin(repeat_buyer_ids)].copy()
     print(f"📋 复购用户的总订单数: {len(all_repeat_buyer_orders):,}")
     
     # 应用锁单时间和车型筛选条件，找出符合条件的复购用户
@@ -363,12 +362,12 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
         return pd.DataFrame()
     
     # 获取符合筛选条件的复购用户ID
-    filtered_repeat_buyer_ids = filtered_orders['Buyer Identity No'].unique()
+    filtered_repeat_buyer_ids = filtered_orders['Owner Identity No'].unique()
     print(f"📊 符合所有条件的复购用户数: {len(filtered_repeat_buyer_ids):,}")
     
     # 获取这些复购用户的所有订单（包括早期订单和符合条件的订单）
     result_df = all_repeat_buyer_orders[
-        all_repeat_buyer_orders['Buyer Identity No'].isin(filtered_repeat_buyer_ids)
+        all_repeat_buyer_orders['Owner Identity No'].isin(filtered_repeat_buyer_ids)
     ].copy()
     
     # 添加订单类型标识
@@ -393,14 +392,14 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
         result_df['产品分类'] = '未知'
     
     # 选择输出列
-    output_columns = ['Buyer Identity No', 'Buyer Cell Phone', 'Order Number', 'Lock_Time', '车型分组', 'Product Name', '产品分类', 'Invoice_Upload_Time', '订单类型']
+    output_columns = ['Owner Identity No', 'Owner Cell Phone', 'Order Number', 'Lock_Time', '车型分组', 'Product Name', '产品分类', 'Invoice_Upload_Time', '订单类型']
     
     # 检查列是否存在，只选择存在的列
     available_output_columns = [col for col in output_columns if col in result_df.columns]
     result_df = result_df[available_output_columns].copy()
     
     # 按买家身份证号和锁单时间排序
-    result_df = result_df.sort_values(['Buyer Identity No', 'Lock_Time'])
+    result_df = result_df.sort_values(['Owner Identity No', 'Lock_Time'])
     
     print(f"\n📋 复购用户订单清单预览（前10条）:")
     print(result_df.head(10).to_string(index=False))
@@ -420,7 +419,7 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
             (df['Order Number'].notna()) &
             (df['Lock_Time'] >= lock_start_datetime) &
             (df['Lock_Time'] <= lock_end_datetime)
-        ]['Buyer Identity No'].nunique()
+        ]['Owner Identity No'].nunique()
         print(f"- 入参车型的总用户数（锁单范围内）: {vehicle_total_users:,}")
     except Exception as e:
         print(f"- 入参车型总用户数统计失败: {e}")
@@ -431,7 +430,7 @@ def get_repeat_buyer_orders_list(reference_date="2025-09-10", lock_start_date="2
     print(f"- 平均每个复购用户总订单数: {len(result_df) / len(filtered_repeat_buyer_ids):.2f}")
     
     # 按买家统计订单数
-    buyer_order_counts = result_df['Buyer Identity No'].value_counts()
+    buyer_order_counts = result_df['Owner Identity No'].value_counts()
     print(f"\n📊 复购用户订单数分布（包含所有订单）:")
     order_count_dist = buyer_order_counts.value_counts().sort_index()
     for order_count, buyer_count in order_count_dist.items():
