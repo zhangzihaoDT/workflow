@@ -850,6 +850,44 @@ class ABComparisonAnalyzer:
             logger.error(f"时间间隔分析失败: {str(e)}")
             return []
     
+    def calculate_sample_stats(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """计算样本统计信息"""
+        stats = {
+            'total_orders': len(df),
+            'unique_ids': 0,
+            'abnormal_ids': 0,
+            'duplicate_id_count': 0,
+            'duplicate_id_orders': 0
+        }
+        
+        if 'Owner Identity No' in df.columns:
+            # 1. 唯一身份证号数
+            stats['unique_ids'] = df['Owner Identity No'].nunique()
+            
+            # 2. 异常身份证号检测
+            def is_valid_id_card(id_val):
+                if pd.isna(id_val):
+                    return False
+                id_str = str(id_val).strip()
+                if id_str == '' or len(id_str) != 18:
+                    return False
+                return validate_id_card(id_str)
+            
+            # 获取所有唯一的身份证号进行检测
+            unique_ids = df['Owner Identity No'].unique()
+            abnormal_count = 0
+            for uid in unique_ids:
+                if not is_valid_id_card(uid):
+                    abnormal_count += 1
+            stats['abnormal_ids'] = abnormal_count
+            
+            # 3. 重复身份证号检测
+            id_counts = df['Owner Identity No'].value_counts()
+            stats['duplicate_id_count'] = (id_counts > 1).sum()
+            stats['duplicate_id_orders'] = id_counts[id_counts > 1].sum()
+            
+        return stats
+
     def generate_comparison_report(self, sample_a: pd.DataFrame, sample_b: pd.DataFrame, 
                                  sample_a_desc: str, sample_b_desc: str, 
                                  parent_regions_filter: List[str] = None,
@@ -938,11 +976,27 @@ class ABComparisonAnalyzer:
         # 生成文字报告
         total_anomalies = len(all_anomalies)
         
+        # 计算样本统计信息
+        stats_a = self.calculate_sample_stats(sample_a)
+        stats_b = self.calculate_sample_stats(sample_b)
+        
         report = f"""# AB对比分析报告
 
 ## 📊 样本信息
-- **{sample_a_desc}** (共{len(sample_a):,}条记录)
-- **{sample_b_desc}** (共{len(sample_b):,}条记录)
+### {sample_a_desc}
+- **订单数**: {stats_a['total_orders']:,}
+- **唯一身份证号数**: {stats_a['unique_ids']:,}
+- **异常身份证号数**: {stats_a['abnormal_ids']:,}
+- **重复身份证号的身份证数**: {stats_a['duplicate_id_count']:,}
+- **重复身份证号的订单数**: {stats_a['duplicate_id_orders']:,}
+
+### {sample_b_desc}
+- **订单数**: {stats_b['total_orders']:,}
+- **唯一身份证号数**: {stats_b['unique_ids']:,}
+- **异常身份证号数**: {stats_b['abnormal_ids']:,}
+- **重复身份证号的身份证数**: {stats_b['duplicate_id_count']:,}
+- **重复身份证号的订单数**: {stats_b['duplicate_id_orders']:,}
+
 - **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## 📈 分析结果统计
